@@ -21,6 +21,13 @@ class AudioEngine(private val context: Context, onFocusLoss: () -> Unit) {
     private var recorder: AudioRecord? = null
     private var track: AudioTrack? = null
 
+    fun acquireFocus() {
+        check(manager.requestAudioFocus(focus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+            "다른 앱이 오디오를 사용 중입니다. 잠시 후 다시 시도해 주세요."
+        }
+    }
+    fun releaseFocus() { manager.abandonAudioFocusRequest(focus) }
+
     // Stop unblocks device I/O; the owning coroutine alone releases the resource in finally.
     fun interrupt() = synchronized(lock) {
         recorder?.let { runCatching { it.stop() } }
@@ -60,7 +67,11 @@ class AudioEngine(private val context: Context, onFocusLoss: () -> Unit) {
                 frame.copyInto(frame, 0, read, size)
                 hop.copyInto(frame, size - read, 0, read)
                 filled += read
-                if (filled >= size) onPitch(smoother.accept(detector.detect(frame)))
+                if (filled >= size) {
+                    val pitch = smoother.accept(detector.detect(frame))
+                    currentCoroutineContext().ensureActive()
+                    onPitch(pitch)
+                }
             }
         } finally {
             synchronized(lock) {
@@ -76,9 +87,6 @@ class AudioEngine(private val context: Context, onFocusLoss: () -> Unit) {
     suspend fun play(events: List<NoteEvent>, bpm: Int, tones: Boolean = true,
                      clicks: Boolean = false, loop: Boolean = false,
                      onBeat: (Int, Int?) -> Unit = { _, _ -> }) = withContext(Dispatchers.Default) {
-        check(manager.requestAudioFocus(focus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
-            "다른 앱이 오디오를 사용 중입니다. 잠시 후 다시 시도해 주세요."
-        }
         var output: AudioTrack? = null
         try {
             val rate = 22050
@@ -136,7 +144,6 @@ class AudioEngine(private val context: Context, onFocusLoss: () -> Unit) {
                 if (track === output) track = null
                 output?.let { runCatching { it.stop() }; it.release() }
             }
-            manager.abandonAudioFocusRequest(focus)
         }
     }
 }

@@ -32,7 +32,7 @@ class SingViewModel(application: Application) : AndroidViewModel(application) {
     private val audio = AudioEngine(application) { viewModelScope.launch { stopAudio() } }
     private var audioJob: Job? = null
     private var timerJob: Job? = null
-    private var audioGeneration = 0
+    @Volatile private var audioGeneration = 0
     private var beatTimeMs: Long? = null
 
     fun target(midi: Int) {
@@ -43,6 +43,7 @@ class SingViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun bpm(value: Int) {
         val bpm = value.coerceIn(50, 120)
+        if (bpm == state.value.bpm) return
         val restart = state.value.metronome
         stopAudio()
         store.setBpm(bpm)
@@ -69,10 +70,11 @@ class SingViewModel(application: Application) : AndroidViewModel(application) {
             metronome = metronome, error = null, tapError = null) }
         audioJob = viewModelScope.launch {
             previous?.join()
-            try { block() }
+            try { audio.acquireFocus(); block() }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (e: Exception) { error(e.message ?: "오디오 오류가 발생했습니다. 다시 시도해 주세요.") }
             finally {
+                audio.releaseFocus()
                 if (generation == audioGeneration) {
                     beatTimeMs = null
                     mutable.update { it.copy(listening = false, playing = false, metronome = false, beat = -1, pitch = null) }
@@ -82,7 +84,12 @@ class SingViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun listen() {
         if (state.value.listening) { stopAudio(); return }
-        launchAudio(listening = true) { audio.capture { pitch -> mutable.update { it.copy(pitch = pitch) } } }
+        launchAudio(listening = true) {
+            val generation = audioGeneration
+            audio.capture { pitch ->
+                mutable.update { if (generation == audioGeneration) it.copy(pitch = pitch) else it }
+            }
+        }
     }
     fun reference() {
         val target = state.value.target
@@ -109,9 +116,16 @@ class SingViewModel(application: Application) : AndroidViewModel(application) {
         if (state.value.metronome) { stopAudio(); return }
         val bpm = state.value.bpm
         launchAudio(metronome = true) {
+            val generation = audioGeneration
             audio.play(List(4) { NoteEvent(null) }, bpm, tones = false, clicks = true, loop = true) { beat, _ ->
                 // Main-thread timestamp is shared with the tap handler.
-                viewModelScope.launch { beatTimeMs = SystemClock.elapsedRealtime(); mutable.update { it.copy(beat = beat) } }
+                val playedAt = SystemClock.elapsedRealtime()
+                viewModelScope.launch {
+                    if (generation == audioGeneration) {
+                        beatTimeMs = playedAt
+                        mutable.update { it.copy(beat = beat) }
+                    }
+                }
             }
         }
     }
@@ -123,11 +137,14 @@ class SingViewModel(application: Application) : AndroidViewModel(application) {
         val events = if (state.value.song) Songs.littleStar else Songs.shortMelody
         val bpm = state.value.bpm
         launchAudio(listening = follow) {
+            val generation = audioGeneration
             coroutineScope {
-                val input = if (follow) launch { audio.capture { pitch -> mutable.update { it.copy(pitch = pitch) } } } else null
+                val input = if (follow) launch {
+                    audio.capture { pitch -> mutable.update { if (generation == audioGeneration) it.copy(pitch = pitch) else it } }
+                } else null
                 try {
                     audio.play(events, bpm, tones = !follow, clicks = true) { beat, note ->
-                        mutable.update { it.copy(beat = beat, target = note ?: it.target) }
+                        mutable.update { if (generation == audioGeneration) it.copy(beat = beat, target = note ?: it.target) else it }
                     }
                 } finally {
                     input?.cancel()
