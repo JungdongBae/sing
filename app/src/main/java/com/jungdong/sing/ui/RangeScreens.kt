@@ -47,7 +47,7 @@ internal fun DiagnosisPage(state: SingState, model: SingViewModel, mic: (() -> U
                 Text("목이 아프거나 불편하면 즉시 중단하고 쉬어 주세요. 현재 측정 범위는 C2~E5이며 기계적으로 끝까지 부를 필요는 없습니다.", color = Coral)
                 Text("노래 연습을 위한 편안한 범위 확인입니다. 마이크 소리는 기기 안에서 처리하고 녹음 파일을 저장하지 않아요.", color = Muted, fontSize = 13.sp)
                 Button(onClick = model::startDiagnosis, modifier = Modifier.fillMaxWidth()) { Text("안내에 따라 시작하기") }
-                OutlinedButton(onClick = model::diagnosisReference, enabled = !state.playing, modifier = Modifier.fillMaxWidth()) { Text("참고음 듣기 · C3") }
+                OutlinedButton(onClick = model::diagnosisReference, enabled = !state.playing, modifier = Modifier.fillMaxWidth()) { Text("참고음 듣기 · ${Music.name(state.range?.center ?: 48)}") }
             }
             TextButton(onClick = model::closeDiagnosis) { Text("나중에 하기 · 기존 기능 사용") }
         }
@@ -89,6 +89,8 @@ internal fun DiagnosisPage(state: SingState, model: SingViewModel, mic: (() -> U
         RangeStage.RESULT -> {
             val profile = diagnosis.profile("preview", 1)
             if (profile != null) RangeResult(profile)
+            OutlinedButton(onClick = model::diagnosisReference, enabled = profile != null && !state.playing && !state.rangeSaving,
+                modifier = Modifier.fillMaxWidth()) { Text("♪ 확인한 시작음 듣기") }
             Button(onClick = model::saveDiagnosis, enabled = profile != null && !state.rangeSaving, modifier = Modifier.fillMaxWidth()) {
                 Text(if (state.rangeSaving) "저장 중…" else "저장하고 4주 훈련에 적용")
             }
@@ -109,9 +111,11 @@ private fun DiagnosisPitch(state: SingState) {
         Text(hz?.let { Music.name(Music.midi(it)) } ?: "—", fontSize = 44.sp, fontWeight = FontWeight.Bold)
         Text(hz?.let { "${decimal(it)} Hz" } ?: "편안하게 ‘아~’ 소리를 내 주세요.", color = Muted)
         if (cents != null) {
+            val matches = abs(cents) <= state.tolerance && (diagnosis.running || diagnosis.measurement?.accepted == true)
             Text("${if (cents > 0) "+" else ""}${decimal(cents, 0)} cents · 목표 ${Music.name(target!!)} 대비",
-                color = if (abs(cents) <= state.tolerance) Lime else Coral)
-            Text(Music.guidance(cents, state.tolerance), color = if (abs(cents) <= state.tolerance) Lime else Coral)
+                color = if (matches) Lime else Coral)
+            if (diagnosis.running || diagnosis.measurement?.failure == null || diagnosis.measurement?.failure == MeasurementFailure.OFF_TARGET)
+                Text(Music.guidance(cents, state.tolerance), color = if (matches) Lime else Coral)
             if (abs(cents) >= 1000) Text("기준음과 옥타브가 다를 수 있어요. 억지로 힘을 주지 말고 다시 들어보세요.", color = Coral, fontSize = 12.sp)
         }
         Text(if (target == null) "시작음은 목표에 맞추는 시험이 아니에요. 두 번의 편안한 목소리가 비슷한지 확인합니다."

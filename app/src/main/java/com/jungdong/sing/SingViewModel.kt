@@ -221,7 +221,9 @@ class SingViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun startDiagnosis() { stopAudio(); mutable.update { it.copy(diagnosis = RangeDiagnosisState(stage = RangeStage.START)) } }
     fun diagnosisReference() {
-        val target = state.value.diagnosis.targetMidi ?: state.value.diagnosis.confirmations.firstOrNull()?.let(Music::midi) ?: 48
+        val draft = state.value.diagnosis
+        val target = if (draft.stage == RangeStage.RESULT) draft.startHz?.let(Music::midi) ?: 48 else
+            draft.targetMidi ?: draft.confirmations.firstOrNull()?.let(Music::midi) ?: state.value.range?.center ?: 48
         launchAudio { audio.play(listOf(NoteEvent(target, 2)), 60) }
     }
     fun measureRange() {
