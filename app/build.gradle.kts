@@ -15,6 +15,17 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true }
+    signingConfigs {
+        create("publicDebug") {
+            // Public development identity only. Never use this key for a release/store build.
+            storeFile = file("debug/sing-debug.p12")
+            storeType = "PKCS12"
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+    buildTypes { getByName("debug") { signingConfig = signingConfigs.getByName("publicDebug") } }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
