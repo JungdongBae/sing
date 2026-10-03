@@ -6,3 +6,5 @@ local.properties
 .idea/
 *.jks
 *.keystore
+*.p12
+!app/debug/sing-debug.p12

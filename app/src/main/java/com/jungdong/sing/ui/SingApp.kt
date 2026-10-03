@@ -1,5 +1,6 @@
 package com.jungdong.sing.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -25,16 +26,16 @@ import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-private val Ink = Color(0xFF101C19)
-private val Panel = Color(0xFF1B2B25)
-private val Lime = Color(0xFFD4F582)
-private val Cream = Color(0xFFF4F5EA)
-private val Muted = Color(0xFFB7C4B5)
-private val Coral = Color(0xFFFFB4A1)
+internal val Ink = Color(0xFF101C19)
+internal val Panel = Color(0xFF1B2B25)
+internal val Lime = Color(0xFFD4F582)
+internal val Cream = Color(0xFFF4F5EA)
+internal val Muted = Color(0xFFB7C4B5)
+internal val Coral = Color(0xFFFFB4A1)
 private val scheme = darkColorScheme(primary = Lime, onPrimary = Ink, background = Ink,
     surface = Panel, onSurface = Cream, onBackground = Cream, secondary = Muted,
     surfaceVariant = Color(0xFF293B31), onSurfaceVariant = Muted, error = Coral)
-private fun decimal(value: Double, places: Int = 1) = String.format(Locale.KOREA, "% .${places}f", value).trim()
+internal fun decimal(value: Double, places: Int = 1) = String.format(Locale.KOREA, "% .${places}f", value).trim()
 private fun clock(seconds: Int) = "%02d:%02d".format(seconds / 60, seconds % 60)
 
 @Composable
@@ -42,8 +43,12 @@ fun SingApp(model: SingViewModel, onMicrophone: (() -> Unit) -> Unit, onSettings
     val state by model.state.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableIntStateOf(0) }
     val titles = listOf("오늘", "음정", "듣기", "박자", "곡", "기록")
+    BackHandler(enabled = state.diagnosisOpen || tab == 6) {
+        if (state.diagnosisOpen) model.closeDiagnosis() else { model.stopAudio(); tab = 0 }
+    }
     MaterialTheme(colorScheme = scheme) {
         Scaffold(containerColor = Ink, bottomBar = {
+            if (!state.diagnosisOpen) {
             NavigationBar(containerColor = Panel) {
                 val symbols = listOf("◷", "♪", "↕", "●", "♫", "✓")
                 titles.forEachIndexed { index, title ->
@@ -51,25 +56,35 @@ fun SingApp(model: SingViewModel, onMicrophone: (() -> Unit) -> Unit, onSettings
                         icon = { Text(symbols[index], fontSize = 22.sp) }, label = { Text(title, fontSize = 11.sp) })
                 }
             }
+            }
         }) { padding ->
             Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(18.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("Sing", fontSize = 32.sp, fontWeight = FontWeight.Black, color = Lime)
-                    Text("음치탈출 4주  /  OFFLINE", fontSize = 11.sp, color = Muted)
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text("음치탈출 4주  /  OFFLINE", fontSize = 11.sp, color = Muted)
+                        TextButton(onClick = { model.stopAudio(); tab = 6 }, enabled = !state.diagnosisOpen && !state.rangeLoading) { Text("음역 · 설정") }
+                    }
                 }
                 state.error?.let {
                     Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF442C26))) {
                         Column(Modifier.padding(16.dp)) { Text(it, color = Coral); TextButton(onClick = onSettings) { Text("앱 권한 설정 열기") } }
                     }
                 }
-                when (tab) {
+                if (state.rangeLoading) {
+                    CircularProgressIndicator()
+                    Text("저장된 음역을 불러오고 있어요.", color = Muted)
+                } else if (state.diagnosisOpen) {
+                    DiagnosisPage(state, model, onMicrophone)
+                } else when (tab) {
                     0 -> Today(state, model) { tab = it }
                     1 -> PitchPage(state, model, onMicrophone)
                     2 -> EarPage(state, model)
                     3 -> RhythmPage(state, model)
                     4 -> SongPage(state, model, onMicrophone)
                     5 -> HistoryPage(state)
+                    6 -> RangeSettingsPage(state, model)
                 }
                 Text("목이 아프면 쉬어 가세요. 작고 편안한 소리로도 충분합니다.", color = Muted, fontSize = 12.sp)
                 Spacer(Modifier.height(8.dp))
@@ -79,7 +94,7 @@ fun SingApp(model: SingViewModel, onMicrophone: (() -> Unit) -> Unit, onSettings
 }
 
 @Composable
-private fun Heading(kicker: String, title: String, body: String) {
+internal fun Heading(kicker: String, title: String, body: String) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(kicker, color = Lime, fontSize = 12.sp, fontWeight = FontWeight.Bold)
         Text(title, fontSize = 28.sp, fontWeight = FontWeight.Bold, lineHeight = 36.sp)
@@ -88,7 +103,7 @@ private fun Heading(kicker: String, title: String, body: String) {
 }
 
 @Composable
-private fun BoxCard(content: @Composable ColumnScope.() -> Unit) {
+internal fun BoxCard(content: @Composable ColumnScope.() -> Unit) {
     Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = Panel)) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
     }
@@ -96,10 +111,16 @@ private fun BoxCard(content: @Composable ColumnScope.() -> Unit) {
 
 @Composable
 private fun Today(state: SingState, model: SingViewModel, open: (Int) -> Unit) {
-    val week = Training.weeks[state.selectedWeek - 1]
+    val week = Training.personalizedWeek(state.selectedWeek, state.range, state.tolerance)
     val stepIndex = Training.stepIndex(state.seconds, week)
     val step = week.steps[stepIndex]
     Heading("YOUR DAILY PRACTICE", "하루 20분,\n내 목소리에 익숙해지기", "낮은 음부터 천천히. 귀로 듣고, 따라 부르고, 박자에 연결해요.")
+    BoxCard {
+        Text(if (state.range == null) "내 편안한 음역 찾기" else "내 음역에 맞춘 연습", fontWeight = FontWeight.Bold)
+        state.range?.let { Text("편안한 음역 ${Music.name(it.lowMidi)}~${Music.name(it.highMidi)} · 추천 ${Music.name(it.recommended.first)}~${Music.name(it.recommended.last)}", color = Muted) }
+            ?: Text("아직 음역을 몰라도 괜찮아요. 안내에 따라 3초씩 소리를 내며 확인해요.", color = Muted)
+        OutlinedButton(onClick = model::openDiagnosis) { Text(if (state.range == null) "음역 진단 시작" else "음역 다시 측정") }
+    }
     BoxCard {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("${state.today} · ${minOf(state.completedDays + 1, 28)}일차", color = Muted)
@@ -114,7 +135,7 @@ private fun Today(state: SingState, model: SingViewModel, open: (Int) -> Unit) {
         if (state.seconds < 1200) {
             Text("지금 할 연습 · ${step.title}", fontWeight = FontWeight.Bold)
             Text(step.instruction, color = Muted)
-            OutlinedButton(onClick = { open(if (step.tool == 3) 4 else step.tool + 1) }) { Text("연습 도구 열기") }
+            OutlinedButton(onClick = { model.prepareWeeklyTool(step.tool); open(if (step.tool == 3) 4 else step.tool + 1) }) { Text("연습 도구 열기") }
         }
     }
     Text("4주 훈련 프로그램", fontSize = 20.sp, fontWeight = FontWeight.Bold)
@@ -126,6 +147,14 @@ private fun Today(state: SingState, model: SingViewModel, open: (Int) -> Unit) {
     }
     Text(week.title, fontSize = 22.sp, fontWeight = FontWeight.Bold)
     Text(week.goal, color = Muted)
+    if (state.range != null) {
+        Text("이번 주 기준음 · 눌러서 선택하세요", color = Muted)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            model.weeklyNotes().forEach { note ->
+                FilterChip(selected = state.target == note, onClick = { model.target(note); open(1) }, label = { Text(Music.name(note)) })
+            }
+        }
+    }
     week.steps.forEachIndexed { index, item ->
         BoxCard {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -143,14 +172,15 @@ private fun TargetControl(state: SingState, model: SingViewModel) {
     BoxCard {
         Text("내가 따라 부를 목표음", color = Muted)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            OutlinedButton(onClick = { model.target(state.target - 1) }, enabled = state.target > 40) { Text("− 반음") }
+            OutlinedButton(onClick = { model.target(state.target - 1) }, enabled = state.target > state.targetBounds.first) { Text("− 반음") }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(Music.name(state.target), fontSize = 32.sp, color = Lime, fontWeight = FontWeight.Bold)
                 Text("${decimal(Music.frequency(state.target))} Hz", color = Muted)
             }
-            OutlinedButton(onClick = { model.target(state.target + 1) }, enabled = state.target < 60) { Text("+ 반음") }
+            OutlinedButton(onClick = { model.target(state.target + 1) }, enabled = state.target < state.targetBounds.last) { Text("+ 반음") }
         }
-        Text("E2–C4 · 처음에는 C3 또는 더 편안한 낮은 음을 선택하세요.", color = Muted, fontSize = 12.sp)
+        Text(state.range?.let { "${Music.name(it.lowMidi)}~${Music.name(it.highMidi)} · 확인한 편안한 음역 안에서 선택해요." }
+            ?: "E2–C4 · 처음에는 C3 또는 더 편안한 낮은 음을 선택하세요.", color = Muted, fontSize = 12.sp)
         Button(onClick = model::reference, modifier = Modifier.fillMaxWidth()) { Text("♪  기준음 듣기") }
     }
 }
@@ -159,7 +189,7 @@ private fun TargetControl(state: SingState, model: SingViewModel) {
 private fun PitchReadout(state: SingState) {
     val pitch = state.pitch
     val cents = pitch?.let { Music.cents(it.hz, state.target) }
-    val color = if (cents != null && abs(cents) <= 25) Lime else Coral
+    val color = if (cents != null && abs(cents) <= state.tolerance) Lime else Coral
     BoxCard {
         Text("목표 ${Music.name(state.target)} 대비 현재 목소리", color = Muted)
         Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -170,16 +200,17 @@ private fun PitchReadout(state: SingState) {
         Canvas(Modifier.fillMaxWidth().height(42.dp)) {
             val center = size.width / 2
             drawLine(Muted.copy(alpha = 0.4f), Offset(0f, 21.dp.toPx()), Offset(size.width, 21.dp.toPx()), strokeWidth = 4.dp.toPx())
-            drawLine(Lime.copy(alpha = 0.55f), Offset(center - size.width / 8, 21.dp.toPx()), Offset(center + size.width / 8, 21.dp.toPx()), strokeWidth = 8.dp.toPx())
+            val band = center * state.tolerance / 100f
+            drawLine(Lime.copy(alpha = 0.55f), Offset(center - band, 21.dp.toPx()), Offset(center + band, 21.dp.toPx()), strokeWidth = 8.dp.toPx())
             drawLine(Cream, Offset(center, 4.dp.toPx()), Offset(center, 38.dp.toPx()), strokeWidth = 2.dp.toPx())
             if (cents != null) drawCircle(color, 8.dp.toPx(), Offset(center + (cents.coerceIn(-100.0, 100.0) / 100 * center).toFloat(), 21.dp.toPx()))
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("낮음 −100", color = Muted, fontSize = 12.sp); Text("목표 0", color = Lime, fontSize = 12.sp); Text("높음 +100", color = Muted, fontSize = 12.sp)
         }
-        Text(cents?.let(Music::guidance) ?: if (state.listening) "조용한 곳에서 한 음을 길게 유지하세요." else "마이크를 켜면 음정이 표시돼요.")
+        Text(cents?.let { Music.guidance(it, state.tolerance) } ?: if (state.listening) "조용한 곳에서 한 음을 길게 유지하세요." else "마이크를 켜면 음정이 표시돼요.")
         if (cents != null && abs(cents) >= 1000) Text("목표음과 옥타브 차이가 날 수 있어요. 기준음을 다시 들어 보세요.", color = Coral, fontSize = 13.sp)
-        Text("초록 구간: ±25 cents · 100 cents = 반음\n범위를 벗어나면 표시점은 끝에 머물고 실제 오차는 숫자로 보여요.", color = Muted, fontSize = 12.sp)
+        Text("초록 구간: ±${state.tolerance} cents · 100 cents = 반음\n범위를 벗어나면 표시점은 끝에 머물고 실제 오차는 숫자로 보여요.", color = Muted, fontSize = 12.sp)
     }
 }
 
@@ -199,7 +230,8 @@ private fun EarPage(state: SingState, model: SingViewModel) {
     Heading("02 / LISTEN", "두 번째 음은\n더 높을까요, 낮을까요?", "먼저 귀로 음의 방향을 느껴 보세요. 정답을 보기 전에 여러 번 들어도 좋아요.")
     BoxCard {
         Text("♪     →     ?", fontSize = 52.sp, color = Lime, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
-        Button(onClick = model::hearQuestion, enabled = !state.playing, modifier = Modifier.fillMaxWidth()) { Text("두 음 듣기 / 다시 듣기") }
+        Button(onClick = model::hearQuestion, enabled = !state.playing && state.earAvailable, modifier = Modifier.fillMaxWidth()) { Text("두 음 듣기 / 다시 듣기") }
+        if (!state.earAvailable) Text("현재 확인한 음역은 한 음이에요. 편안할 때 재측정한 뒤 높낮이 비교를 시작해 주세요.", color = Muted)
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedButton(onClick = { model.answer(true) }, enabled = state.questionHeard && state.earAnswer == null && !state.playing, modifier = Modifier.weight(1f)) { Text("↑ 더 높아요") }
             OutlinedButton(onClick = { model.answer(false) }, enabled = state.questionHeard && state.earAnswer == null && !state.playing, modifier = Modifier.weight(1f)) { Text("↓ 더 낮아요") }
@@ -211,7 +243,8 @@ private fun EarPage(state: SingState, model: SingViewModel) {
         }
         Text("오늘 앱 실행 중 정답 ${state.earCorrect} / ${state.earTotal}", color = Muted)
     }
-    Text("두 음은 낮은 남성 음역에서 무작위로 출제됩니다. 마이크 권한 없이 연습할 수 있어요.", color = Muted)
+    Text(if (state.range == null) "두 음은 낮은 남성 음역에서 무작위로 출제됩니다. 마이크 권한 없이 연습할 수 있어요."
+        else "두 음은 개인 추천 음역 안에서 출제됩니다. 마이크 권한 없이 연습할 수 있어요.", color = Muted)
 }
 
 @Composable
@@ -249,18 +282,32 @@ private fun RhythmPage(state: SingState, model: SingViewModel) {
 
 @Composable
 private fun SongPage(state: SingState, model: SingViewModel, mic: (() -> Unit) -> Unit) {
+    val melody = state.range?.melody() ?: Songs.shortMelody
+    val song = state.range?.song(state.songRoot) ?: if (state.range == null) Songs.littleStar else null
     Heading("04 / MELODY", "한 음에서 한 곡으로", "멜로디를 먼저 듣고 따라 부르세요. 따라 부르기에서는 클릭만 재생하고 목표음이 박자에 맞춰 바뀝니다.")
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         FilterChip(selected = !state.song, onClick = { model.selectSong(false) }, label = { Text("짧은 패턴") })
         FilterChip(selected = state.song, onClick = { model.selectSong(true) }, label = { Text("작은별 · 한 곡") })
     }
     BoxCard {
-        Text(if (state.song) "작은별 · C3–A3 · 48박" else "C3 D3 E3 D3 C3 E3 D3 C3 · 8박", color = Muted)
+        Text(if (state.song) song?.let { "작은별 · ${Music.name(it.minOf { e -> e.midi!! })}~${Music.name(it.maxOf { e -> e.midi!! })} · 48박" }
+            ?: "현재 음역 안에서는 작은별의 모든 음을 담을 수 없어요." else melody.joinToString(" ") { Music.name(it.midi!!) } + " · 8박", color = Muted)
+        if (state.song && state.range != null) {
+            val roots = state.range!!.songRoots
+            if (roots == null) Text("짧은 패턴으로 연습해 주세요. 무리하게 음역을 넓히지 마세요.", color = Coral)
+            else {
+                Text("내 음역에 맞춘 키 · 첫 음 ${Music.name(state.songRoot)}", color = Lime)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { model.songRoot(state.songRoot - 1) }, enabled = state.songRoot > roots.first) { Text("키 − 반음") }
+                    OutlinedButton(onClick = { model.songRoot(state.songRoot + 1) }, enabled = state.songRoot < roots.last) { Text("키 + 반음") }
+                }
+            }
+        }
         Tempo(state, model)
         Beats(state.beat)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Button(onClick = { model.melody(false) }, modifier = Modifier.weight(1f)) { Text("♪ 멜로디 듣기") }
-            OutlinedButton(onClick = { mic { model.melody(true) } }, modifier = Modifier.weight(1f)) { Text("따라 부르기") }
+            Button(onClick = { model.melody(false) }, enabled = !state.song || state.songAvailable, modifier = Modifier.weight(1f)) { Text("♪ 멜로디 듣기") }
+            OutlinedButton(onClick = { mic { model.melody(true) } }, enabled = !state.song || state.songAvailable, modifier = Modifier.weight(1f)) { Text("따라 부르기") }
         }
         if (state.listening || state.playing) TextButton(onClick = model::stopAudio) { Text("■ 연습 멈추기") }
         Text("클릭이 마이크에 들어가지 않도록 이어폰을 권장해요. 화면의 음 이름을 보며 한 박씩 이어 보세요.", color = Muted, fontSize = 12.sp)
@@ -268,10 +315,13 @@ private fun SongPage(state: SingState, model: SingViewModel, mic: (() -> Unit) -
     PitchReadout(state)
     BoxCard {
         Text("멜로디 길잡이", fontWeight = FontWeight.Bold)
-        if (state.song) {
+        if (state.song && song == null) {
+            Text("작은별은 최저음과 최고음 사이에 9반음이 필요해요. 지금은 짧은 패턴으로 연습해 주세요.", color = Muted)
+        } else if (state.song) {
             Text("도 도 솔 솔 | 라 라 솔—\n파 파 미 미 | 레 레 도—\n솔 솔 파 파 | 미 미 레—\n솔 솔 파 파 | 미 미 레—\n도 도 솔 솔 | 라 라 솔—\n파 파 미 미 | 레 레 도—", lineHeight = 28.sp)
-            Text("도=C3 · 레=D3 · 미=E3 · 파=F3 · 솔=G3 · 라=A3\n‘—’는 한 박 더 유지해요. 전통 멜로디 / 퍼블릭 도메인.", color = Muted, fontSize = 12.sp)
-        } else Text("도 레 미 레 | 도 미 레 도\n한 음에 한 박씩, 낮은 C3부터 시작해요.", lineHeight = 28.sp)
+            val root = if (state.range == null) 48 else state.songRoot
+            Text("도=${Music.name(root)} · 레=${Music.name(root + 2)} · 미=${Music.name(root + 4)} · 파=${Music.name(root + 5)} · 솔=${Music.name(root + 7)} · 라=${Music.name(root + 9)}\n‘—’는 한 박 더 유지해요. 전통 멜로디 / 퍼블릭 도메인.", color = Muted, fontSize = 12.sp)
+        } else Text(melody.joinToString(" ") { Music.name(it.midi!!) } + "\n한 음에 한 박씩, 편안하게 이어 보세요.", lineHeight = 28.sp)
     }
 }
 

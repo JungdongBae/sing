@@ -13,8 +13,8 @@ class PitchDetector(private val sampleRate: Int = 22050) {
         val x = DoubleArray(samples.size) { (samples[it] - mean) / 32768.0 }
         val rms = sqrt(x.sumOf { it * it } / x.size)
         if (rms < 0.008) return null
-        val minLag = sampleRate / 500
-        val maxLag = min(sampleRate / 65, x.size / 2 - 1)
+        val minLag = sampleRate / 800
+        val maxLag = min(sampleRate / 60, x.size / 2 - 1)
         val window = x.size - maxLag
         val diff = DoubleArray(maxLag + 1)
         for (lag in 1..maxLag) {
@@ -38,7 +38,7 @@ class PitchDetector(private val sampleRate: Int = 22050) {
                 val denominator = 2 * (2 * mid - left - right)
                 val shift = if (abs(denominator) > 1e-12) (right - left) / denominator else 0.0
                 val hz = sampleRate / (lag + shift.coerceIn(-1.0, 1.0))
-                return if (hz in 65.0..500.0) Pitch(hz, 1 - mid, rms) else null
+                return if (hz in 60.0..800.0) Pitch(hz, 1 - mid, rms) else null
             }
             lag++
         }

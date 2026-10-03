@@ -10,8 +10,8 @@ object Music {
     fun midi(hz: Double): Int = (69 + 12 * log2(hz / 440)).roundToInt()
     fun name(midi: Int): String = "${names[Math.floorMod(midi, 12)]}${midi / 12 - 1}"
     fun cents(hz: Double, targetMidi: Int): Double = 1200 * log2(hz / frequency(targetMidi))
-    fun guidance(cents: Double): String = when {
-        abs(cents) <= 25 -> "좋아요! 목표음과 맞아요"
+    fun guidance(cents: Double, tolerance: Int = 25): String = when {
+        abs(cents) <= tolerance -> "잘 맞췄어요! 목표음과 맞아요"
         cents < 0 -> "조금 더 높게 불러 보세요 ↑"
         else -> "조금 더 낮게 불러 보세요 ↓"
     }
@@ -25,6 +25,12 @@ data class EarQuestion(val first: Int, val second: Int) {
             val first = random.nextInt(45, 53)
             val interval = random.nextInt(1, 6) * if (random.nextBoolean()) 1 else -1
             return EarQuestion(first, first + interval)
+        }
+        fun nextInRange(range: IntRange, random: Random = Random.Default): EarQuestion? {
+            if (range.last <= range.first) return null
+            val first = random.nextInt(range.first, range.last + 1)
+            val candidates = (maxOf(range.first, first - 5)..minOf(range.last, first + 5)).filter { it != first }
+            return EarQuestion(first, candidates.random(random))
         }
     }
 }

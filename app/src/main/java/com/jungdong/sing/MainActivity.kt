@@ -21,7 +21,7 @@ class MainActivity : ComponentActivity() {
         val action = pendingMic
         pendingMic = null
         if (granted && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) action?.invoke()
-        else if (!granted) model.error("마이크 권한이 없어 음정 측정을 시작하지 못했습니다. 권한을 허용하거나 앱 설정에서 변경해 주세요. 듣기와 박자 연습은 계속 사용할 수 있어요.")
+        else if (!granted) model.microphonePermissionDenied()
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
