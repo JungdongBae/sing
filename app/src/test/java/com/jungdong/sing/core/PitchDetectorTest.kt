@@ -27,6 +27,12 @@ class PitchDetectorTest {
         val pitch = detector.detect(signal(Music.frequency(48), fundamental = 0.15, harmonic = 0.4))!!
         assertEquals(0.0, Music.cents(pitch.hz, 48), 8.0)
     }
+    @Test fun detectsHigherComfortableNotesForPersonalDiagnosis() {
+        listOf(64, 69, 72, 76).forEach { midi ->
+            val pitch = detector.detect(signal(Music.frequency(midi)))!!
+            assertEquals(0.0, Music.cents(pitch.hz, midi), 8.0)
+        }
+    }
     @Test fun toleratesModerateNoiseAndDc() {
         val pitch = detector.detect(signal(Music.frequency(48), noise = 0.03, dc = 0.1))!!
         assertEquals(0.0, Music.cents(pitch.hz, 48), 12.0)
