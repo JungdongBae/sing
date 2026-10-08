@@ -12,7 +12,7 @@
 
 **반주 파일의 피치 변경은 구현하지 않았습니다.** 선택 키로 만들어진 적법한 반주를 별도로 가져오고 키·시작 시각을 확인해야 반주와 전체 녹음을 사용할 수 있습니다. 출력 지연 추정과 마이크·권한 창·파일 선택기·옛사랑 자료를 이용한 완곡 동작은 실기기 검증이 남아 있습니다. 음색·표현력을 음정만으로 자동 평가하지 않습니다.
 
-2026-10-08 [구현 및 보강 CI](https://github.com/JungdongBae/sing/actions/runs/37765831882)에서 `testDebugUnitTest lintDebug assembleDebug` 성공, **97개 테스트 통과(실패/오류/무시 0개), lint 오류 0개·최신 버전 권고 6개**를 확인했습니다. 1.2.0 디버그 APK는 10,607,049 bytes이며 인증서 SHA-256 `89ec1cf3caf73a185c2401b1b81e0bbc4e7e00480d8e7cae6ab1637e0bdf7a91`로 기존 1.1 고정 개발용 키와 같습니다. 기존 59개 테스트를 유지하고 키 안전성·무음/소음·옥타브·부분 녹음·지연·MIDI/XML 타이밍·DataStore 재열기·자가 평가/삭제·WAV 헤더를 검증했습니다. 이후 반복음의 구별 가능한 시작점 보강을 포함한 최종 결과는 [PR #3](https://github.com/JungdongBae/sing/pull/3) 최신 검사에서 확인합니다. 로컬 Gradle 다운로드는 터미널 네트워크 실행 제한으로 차단되어 CI에서 실제 빌드했습니다.
+2026-10-08 [최종 기능 코드의 CI](https://github.com/JungdongBae/sing/actions/runs/37767746146)에서 `testDebugUnitTest lintDebug assembleDebug` 성공, **101개 테스트 통과(실패/오류/무시 0개), lint 오류 0개·최신 버전 권고 6개**를 확인했습니다. 1.2.0 디버그 APK는 10,607,049 bytes이며 인증서 SHA-256 `89ec1cf3caf73a185c2401b1b81e0bbc4e7e00480d8e7cae6ab1637e0bdf7a91`로 기존 1.1 고정 개발용 키와 같습니다. 기존 59개 테스트를 유지하고 키 안전성·무음/소음·옥타브·부분 녹음·지연·MIDI/XML 타이밍·DataStore 재열기·자가 평가/삭제·WAV 헤더, 구별 가능한 반복음 시작점과 취소된 대기 작업 사이의 오디오 소유권을 검증했습니다. [설치용 APK](https://github.com/JungdongBae/sing/actions/runs/37767746146/artifacts/11546471039)와 [검사 보고서](https://github.com/JungdongBae/sing/actions/runs/37767746146/artifacts/11547085819)는 30일 보관하며 이후 빌드는 [PR #3](https://github.com/JungdongBae/sing/pull/3)에서 확인합니다. 로컬 Gradle 다운로드는 터미널 네트워크 실행 제한으로 차단되어 CI에서 실제 빌드했습니다.
 
 지원 파일 형식·키 선정 조건·분석 의미·저장 구조·제한은 [한 곡 완성 모드 안내](docs/FIRST_SONG.md), 남은 기기 확인은 [실기기 체크리스트](docs/DEVICE_CHECKLIST.md)에 정리했습니다. PR #1/#2가 미병합이라 PR #3은 `feat/personal-range-diagnosis`를 기반으로 합니다.
 
