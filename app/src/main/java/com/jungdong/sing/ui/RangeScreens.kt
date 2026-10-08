@@ -128,6 +128,8 @@ internal fun RangeResult(profile: VocalRangeProfile) {
     BoxCard {
         Text(if (profile.source == RangeSource.MANUAL && profile.previousId == null) "직접 설정한 시작 기준음" else "측정 당시 시작음", color = Muted)
         Text("${Music.name(profile.startMidi)} · ${decimal(profile.startHz)} Hz", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        Text(profile.startConfidence?.let { "시작음 검출 신뢰도 ${decimal(it * 100, 0)}% · 음색 평가가 아니에요" }
+            ?: "검출 신뢰도 수치는 이 기록에 없어요. 새 진단에서 저장됩니다.", color = Muted, fontSize = 12.sp)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
             Column(Modifier.weight(1f)) { Text("최저 편안음", color = Muted); Text(Music.name(profile.lowMidi), fontSize = 30.sp, color = Lime) }
             Column(Modifier.weight(1f)) { Text("최고 편안음", color = Muted); Text(Music.name(profile.highMidi), fontSize = 30.sp, color = Lime) }

@@ -43,7 +43,7 @@ fun SingApp(model: SingViewModel, onMicrophone: (() -> Unit) -> Unit, onSettings
     val state by model.state.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableIntStateOf(0) }
     val titles = listOf("오늘", "음정", "듣기", "박자", "곡", "기록")
-    BackHandler(enabled = state.diagnosisOpen || tab == 6) {
+    BackHandler(enabled = state.diagnosisOpen || tab >= 6) {
         if (state.diagnosisOpen) model.closeDiagnosis() else { model.stopAudio(); tab = 0 }
     }
     MaterialTheme(colorScheme = scheme) {
@@ -65,6 +65,7 @@ fun SingApp(model: SingViewModel, onMicrophone: (() -> Unit) -> Unit, onSettings
                     Column(horizontalAlignment = Alignment.End) {
                         Text("음치탈출 4주  /  OFFLINE", fontSize = 11.sp, color = Muted)
                         TextButton(onClick = { model.stopAudio(); tab = 6 }, enabled = !state.diagnosisOpen && !state.rangeLoading) { Text("음역 · 설정") }
+                        TextButton(onClick = { model.firstSong.open(); tab = 7 }, enabled = !state.diagnosisOpen && !state.rangeLoading) { Text("나의 첫 완성곡") }
                     }
                 }
                 state.error?.let {
@@ -85,6 +86,7 @@ fun SingApp(model: SingViewModel, onMicrophone: (() -> Unit) -> Unit, onSettings
                     4 -> SongPage(state, model, onMicrophone)
                     5 -> HistoryPage(state)
                     6 -> RangeSettingsPage(state, model)
+                    7 -> CompletionPage(state, model, onMicrophone)
                 }
                 Text("목이 아프면 쉬어 가세요. 작고 편안한 소리로도 충분합니다.", color = Muted, fontSize = 12.sp)
                 Spacer(Modifier.height(8.dp))

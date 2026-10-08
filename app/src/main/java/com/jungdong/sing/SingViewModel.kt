@@ -46,6 +46,8 @@ class SingViewModel(application: Application) : AndroidViewModel(application) {
     private var timerJob: Job? = null
     @Volatile private var audioGeneration = 0
     private var beatTimeMs: Long? = null
+    val firstSong = CompletionController(application, viewModelScope, audio, ::stopAudio,
+        { audioJob?.join() }, ::pauseSession, { state.value }, ::error)
 
     init {
         viewModelScope.launch {
@@ -63,6 +65,7 @@ class SingViewModel(application: Application) : AndroidViewModel(application) {
                         question = if (changed) profile?.let { p -> EarQuestion.nextInRange(p.recommended) } ?: EarQuestion.next() else it.question,
                         questionHeard = if (changed) false else it.questionHeard, earAnswer = if (changed) null else it.earAnswer) }
                     firstLoad = false
+                    if (changed) firstSong.onProfileChanged(profile)
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { mutable.update { it.copy(rangeLoading = false, error = "저장된 음역 기록을 읽지 못했어요. 기존 파일은 변경하지 않았습니다. 다시 실행해 주세요.") } }
@@ -90,6 +93,7 @@ class SingViewModel(application: Application) : AndroidViewModel(application) {
     fun error(message: String) { mutable.update { it.copy(error = message) } }
 
     fun stopAudio() {
+        firstSong.stop()
         audioGeneration++
         audioJob?.cancel()
         audio.interrupt()
@@ -107,6 +111,7 @@ class SingViewModel(application: Application) : AndroidViewModel(application) {
             diagnosis = if (diagnosis) RangeWorkflow.begin(it.diagnosis) else it.diagnosis) }
         audioJob = viewModelScope.launch {
             previous?.join()
+            firstSong.joinAudio()
             try { audio.acquireFocus(); block() }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (e: Exception) {
@@ -210,6 +215,7 @@ class SingViewModel(application: Application) : AndroidViewModel(application) {
         if (tool == 3) selectSong(state.value.selectedWeek == 4 && state.value.songAvailable)
     }
     fun openDiagnosis() {
+        firstSong.pauseTimer()
         pauseSession(); stopAudio()
         mutable.update { it.copy(diagnosisOpen = true, diagnosis = RangeDiagnosisState(), error = null) }
     }
@@ -276,7 +282,7 @@ class SingViewModel(application: Application) : AndroidViewModel(application) {
         }
         val old = state.value.range
         val profile = VocalRangeProfile(UUID.randomUUID().toString(), System.currentTimeMillis(),
-            old?.startHz ?: Music.frequency((low + high) / 2), low, high, RangeSource.MANUAL, old?.id)
+            old?.startHz ?: Music.frequency((low + high) / 2), low, high, RangeSource.MANUAL, old?.id, startConfidence = old?.startConfidence)
         saveRange(profile)
     }
     private fun saveRange(profile: VocalRangeProfile) {
@@ -304,6 +310,7 @@ class SingViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun toggleSession() {
+        firstSong.pauseTimer()
         refreshDate()
         if (state.value.sessionRunning) { pauseSession(); return }
         if (state.value.seconds >= Training.DAILY_SECONDS) return
@@ -336,6 +343,6 @@ class SingViewModel(application: Application) : AndroidViewModel(application) {
         mutable.update { it.copy(sessionRunning = false) }
     }
     fun foreground() { refreshDate() }
-    fun background() { pauseSession(); stopAudio() }
+    fun background() { pauseSession(); stopAudio(); firstSong.background() }
     override fun onCleared() { background(); super.onCleared() }
 }
