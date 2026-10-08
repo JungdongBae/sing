@@ -26,6 +26,32 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Unit tests, lint and installable debug APK
         run: ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug
+      - name: Summarize verification and APK identity
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, os, subprocess, xml.etree.ElementTree as ET
+          test_files = list(Path('app/build/test-results/testDebugUnitTest').glob('TEST-*.xml'))
+          assert test_files, 'JUnit XML reports are missing'
+          totals = {k: 0 for k in ['tests', 'failures', 'errors', 'skipped']}
+          for file in test_files:
+              root = ET.parse(file).getroot()
+              for key in totals:
+                  totals[key] += int(root.attrib.get(key, 0))
+          lint = ET.parse('app/build/reports/lint-results-debug.xml').getroot()
+          issues = [issue.attrib['severity'] for issue in lint.findall('issue')]
+          apk = Path('app/build/outputs/apk/debug/app-debug.apk')
+          summary = {**totals, 'lint_errors': sum(s in ['Error', 'Fatal'] for s in issues),
+                     'lint_warnings': issues.count('Warning'), 'apk_bytes': apk.stat().st_size}
+          print('SING_VERIFICATION=' + json.dumps(summary))
+          Path('app/build/reports/sing-verification.json').write_text(json.dumps(summary, indent=2))
+          sdk = Path(os.environ['ANDROID_HOME']) / 'build-tools/35.0.0'
+          subprocess.run([str(sdk / 'apksigner'), 'verify', '--print-certs', str(apk)], check=True)
+          badging = subprocess.check_output([str(sdk / 'aapt'), 'dump', 'badging', str(apk)], text=True)
+          print(next(line for line in badging.splitlines() if line.startswith('package:')))
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
+              output.write('### Sing verification\n\n```json\n' + json.dumps(summary, indent=2) + '\n```\n')
+          PY
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
@@ -41,5 +67,8 @@ jobs:
           path: |
             app/build/reports/tests/testDebugUnitTest/
             app/build/reports/lint-results-debug.html
+            app/build/reports/lint-results-debug.xml
+            app/build/reports/sing-verification.json
+            app/build/test-results/testDebugUnitTest/
           if-no-files-found: warn
           retention-days: 30

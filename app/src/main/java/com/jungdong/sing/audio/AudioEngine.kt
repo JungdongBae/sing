@@ -20,13 +20,19 @@ class AudioEngine(private val context: Context, onFocusLoss: () -> Unit) {
     private val lock = Any()
     private var recorder: AudioRecord? = null
     private var track: AudioTrack? = null
+    private val sessions = AudioSessionGate()
 
-    fun acquireFocus() {
+    suspend fun focused(block: suspend () -> Unit) = sessions.run {
+        acquireFocus()
+        try { block() } finally { releaseFocus() }
+    }
+
+    private fun acquireFocus() {
         check(manager.requestAudioFocus(focus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
             "다른 앱이 오디오를 사용 중입니다. 잠시 후 다시 시도해 주세요."
         }
     }
-    fun releaseFocus() { manager.abandonAudioFocusRequest(focus) }
+    private fun releaseFocus() { manager.abandonAudioFocusRequest(focus) }
 
     // Stop unblocks device I/O; the owning coroutine alone releases the resource in finally.
     fun interrupt() = synchronized(lock) {
@@ -35,7 +41,10 @@ class AudioEngine(private val context: Context, onFocusLoss: () -> Unit) {
     }
 
     @SuppressLint("MissingPermission")
-    suspend fun capture(onPitch: (Pitch?) -> Unit) = withContext(Dispatchers.IO) {
+    suspend fun capture(onPcm: (Int, ShortArray) -> Unit = { _, _ -> },
+                        onFrame: (Long, Pitch?) -> Unit = { _, _ -> },
+                        onStarted: () -> Unit = {},
+                        onPitch: (Pitch?) -> Unit) = withContext(Dispatchers.IO) {
         check(context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
             "마이크 권한이 필요합니다. 설정에서 마이크 접근을 허용해 주세요."
         }
@@ -57,19 +66,25 @@ class AudioEngine(private val context: Context, onFocusLoss: () -> Unit) {
             currentCoroutineContext().ensureActive()
             input.startRecording()
             check(input.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "마이크를 사용할 수 없습니다. 다른 앱의 녹음을 종료해 주세요." }
+            onStarted()
             val frame = ShortArray(size)
             val hop = ShortArray(size / 2)
             var filled = 0
+            var totalSamples = 0L
             while (currentCoroutineContext().isActive) {
                 val read = input.read(hop, 0, hop.size, AudioRecord.READ_BLOCKING)
                 currentCoroutineContext().ensureActive()
                 check(read > 0) { "마이크 읽기가 중단됐습니다. 다시 시작해 주세요." }
+                onPcm(rate, hop.copyOf(read))
+                totalSamples += read
                 frame.copyInto(frame, 0, read, size)
                 hop.copyInto(frame, size - read, 0, read)
                 filled += read
                 if (filled >= size) {
-                    val pitch = smoother.accept(detector.detect(frame))
+                    val rawPitch = detector.detect(frame)
+                    val pitch = smoother.accept(rawPitch)
                     currentCoroutineContext().ensureActive()
+                    onFrame((totalSamples - size / 2) * 1000 / rate, rawPitch)
                     onPitch(pitch)
                 }
             }
@@ -81,6 +96,9 @@ class AudioEngine(private val context: Context, onFocusLoss: () -> Unit) {
             }
         }
     }
+
+    fun routeSignature(): String = manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+        .sortedBy { it.id }.joinToString("|") { "${it.type}:${it.id}:${it.productName}" }
 
     /** Static PCM looping avoids coroutine scheduling drift in the metronome.
      * UI beat callbacks follow the playback head, not the time PCM was queued. */
@@ -144,6 +162,42 @@ class AudioEngine(private val context: Context, onFocusLoss: () -> Unit) {
                 if (track === output) track = null
                 output?.let { runCatching { it.stop() }; it.release() }
             }
+        }
+    }
+
+    /** Fractional durations and rests are preserved; generated MIDI tones only, no backing pitch shift. */
+    suspend fun playMelody(notes: List<MelodyNote>, shift: Int, onPosition: (Long) -> Unit = {}) = withContext(Dispatchers.Default) {
+        require(notes.isNotEmpty() && notes.last().endMs <= 600000)
+        val rate = 22050
+        val pcm = ShortArray((notes.last().endMs * rate / 1000).toInt())
+        for (note in notes) {
+            val start = (note.startMs * rate / 1000).toInt()
+            val end = minOf(pcm.size, (note.endMs * rate / 1000).toInt())
+            val frequency = Music.frequency(note.midi + shift)
+            for (i in start until end) {
+                val envelope = minOf(1.0, (i - start) / (rate * .015), (end - i) / (rate * .04))
+                pcm[i] = (.20 * envelope * sin(2 * PI * frequency * (i - start) / rate) * Short.MAX_VALUE).toInt().toShort()
+            }
+            currentCoroutineContext().ensureActive()
+        }
+        var output: AudioTrack? = null
+        try {
+            val active = AudioTrack.Builder().setAudioAttributes(attributes)
+                .setAudioFormat(AudioFormat.Builder().setSampleRate(rate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT).build())
+                .setTransferMode(AudioTrack.MODE_STATIC).setBufferSizeInBytes(pcm.size * 2).build()
+            output = active
+            synchronized(lock) { track = active }
+            check(active.state != AudioTrack.STATE_UNINITIALIZED && active.write(pcm, 0, pcm.size) == pcm.size)
+            currentCoroutineContext().ensureActive(); active.play()
+            while (currentCoroutineContext().isActive) {
+                val head = active.playbackHeadPosition.toLong() and 0xffffffffL
+                onPosition(head * 1000 / rate)
+                if (head >= pcm.size) break
+                delay(20)
+            }
+        } finally {
+            synchronized(lock) { if (track === output) track = null; output?.let { runCatching { it.stop() }; it.release() } }
         }
     }
 }
