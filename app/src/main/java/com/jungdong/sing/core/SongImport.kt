@@ -179,7 +179,11 @@ object SongImporter {
                                 beats = time.value("beats")?.toIntOrNull() ?: error("복합 박자표는 지원하지 않습니다.")
                                 denominator = time.value("beat-type")?.toInt() ?: 4; require(beats in 1..12 && denominator in listOf(1,2,4,8,16,32))
                             }
-                            item.child("transpose")?.let { require((it.value("chromatic")?.toInt() ?: 0) == 0) { "실음으로 변환한 멜로디 악보를 사용해 주세요." } }
+                            item.child("transpose")?.let { transposition ->
+                                require(listOf("chromatic", "diatonic", "octave-change").all { (transposition.value(it)?.toInt() ?: 0) == 0 }) {
+                                    "실음으로 변환한 멜로디 악보를 사용해 주세요. 옥타브 이조도 포함합니다."
+                                }
+                            }
                             item.child("key")?.value("fifths")?.let { fifths ->
                                 val mode = item.child("key")?.value("mode") ?: "major"
                                 require(mode == "major" || mode == "minor"); keyNames.add(key(fifths.toInt(), mode == "minor"))

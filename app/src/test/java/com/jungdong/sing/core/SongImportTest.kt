@@ -62,4 +62,8 @@ class SongImportTest {
         val internal=score.replace("http://www.musicxml.org/dtds/partwise.dtd\">","http://www.musicxml.org/dtds/partwise.dtd\" [<!ENTITY a \"attack\">]>")
         assertThrows(IllegalArgumentException::class.java) { SongImporter.parse(internal.toByteArray()) }
     }
+    @Test fun octaveTransposingPartIsNotMistakenForConcertPitch() {
+        val score=String(xml()).replace("</attributes>","<transpose><diatonic>0</diatonic><chromatic>0</chromatic><octave-change>-1</octave-change></transpose></attributes>")
+        assertThrows(IllegalArgumentException::class.java) { SongImporter.parse(score.toByteArray()) }
+    }
 }
