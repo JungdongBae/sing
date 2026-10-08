@@ -110,7 +110,7 @@ class CompletionController(
             try {
                 val pair = withContext(Dispatchers.IO) {
                     val fileName = name(uri)
-                    val bytes = context.contentResolver.openInputStream(uri)?.use { input ->
+                    val bytes: ByteArray = context.contentResolver.openInputStream(uri)?.use { input ->
                         val buffer = java.io.ByteArrayOutputStream(); val chunk = ByteArray(8192)
                         while (true) {
                             currentCoroutineContext().ensureActive()
@@ -118,7 +118,7 @@ class CompletionController(
                             require(buffer.size() + n <= SongImporter.MAX_BYTES) { "MIDI/MusicXML은 2MB 이하로 가져와 주세요." }; buffer.write(chunk, 0, n)
                         }
                         buffer.toByteArray()
-                    } ?: error("곡 자료를 열 수 없습니다.")
+                    } ?: throw IllegalArgumentException("곡 자료를 열 수 없습니다.")
                     fileName to SongImporter.parse(bytes)
                 }
                 mutable.update { it.copy(draftName = pair.first, draft = pair.second) }
@@ -176,7 +176,7 @@ class CompletionController(
         val r = state.value.records; val profile = basicState().range
         val notes = if (r.song == null) emptyList() else practiceNotes()
         val shift = if (r.song == null) 0 else r.selectedKey ?: run { error("곡 녹음 전에 적합한 키를 선택해 주세요."); return }
-        if (r.song != null && recommendations().none { it.semitones == shift }) { error("음역이 바뀌었어요. 키를 다시 선택해 주세요."); return }
+        if (r.song != null && (r.keyProfileId != profile?.id || recommendations().none { it.semitones == shift })) { error("음역이 바뀌었어요. 키를 다시 선택해 주세요."); return }
         if (withBacking && (r.backing == null || r.backing.semitones != shift || state.value.sectionId != null)) {
             error("전체 곡과 선택 키에 맞는 반주 파일이 필요해요. 반주 피치 변경은 지원하지 않습니다."); return
         }
@@ -290,7 +290,7 @@ class CompletionController(
                             val n = input.read(buffer); if (n < 0) break
                             total += n; require(total <= 100L * 1024 * 1024) { "반주는 100MB 이하로 가져와 주세요." }; output.write(buffer, 0, n)
                         }
-                    } } ?: error("반주 파일을 열 수 없습니다.")
+                    } } ?: throw IllegalArgumentException("반주 파일을 열 수 없습니다.")
                     val p = preparePlayer(file)
                     try { require(p.duration in 1..600000) { "10분 이하의 반주를 사용해 주세요." }; BackingFile(title, file.name, p.duration.toLong(), semitones) }
                     finally { p.release() }

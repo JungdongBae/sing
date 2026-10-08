@@ -75,9 +75,10 @@ class AudioEngine(private val context: Context, onFocusLoss: () -> Unit) {
                 hop.copyInto(frame, size - read, 0, read)
                 filled += read
                 if (filled >= size) {
-                    val pitch = smoother.accept(detector.detect(frame))
+                    val rawPitch = detector.detect(frame)
+                    val pitch = smoother.accept(rawPitch)
                     currentCoroutineContext().ensureActive()
-                    onFrame((totalSamples - size / 2) * 1000 / rate, pitch)
+                    onFrame((totalSamples - size / 2) * 1000 / rate, rawPitch)
                     onPitch(pitch)
                 }
             }

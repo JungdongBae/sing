@@ -207,7 +207,7 @@ internal fun CompletionPage(basic: SingState, model: SingViewModel, mic: (() -> 
         Text("앱은 반주의 피치를 변경하지 않아요. 선택한 연습 키로 만들어진 반주를 가져오세요. 앞부분 대기 시간도 멜로디 자료와 같아야 해요.", color = Muted)
         OutlinedTextField(value = backingShift, onValueChange = { backingShift = it }, label = { Text("반주 키: 멜로디 파일 대비 반음 이동량 (-24~24)") }, modifier = Modifier.fillMaxWidth())
         CheckRow(backingConsent, { backingConsent = it }, "반주를 적법하게 보유하고 키·시작 시각을 확인했어요")
-        OutlinedButton(onClick = { backingImporter.launch(arrayOf("audio/*")) }, enabled = !busy && backingConsent && backingShift.toIntOrNull() in -24..24) { Text("반주 파일 가져오기 (100MB / 10분 이하)") }
+        OutlinedButton(onClick = { backingImporter.launch(arrayOf("audio/*")) }, enabled = !busy && backingConsent && (backingShift.toIntOrNull() ?: 999) in -24..24) { Text("반주 파일 가져오기 (100MB / 10분 이하)") }
         records.backing?.let { backing ->
             Text("${backing.name} · ${keyLabel(backing.semitones)}", color = Lime)
             OutlinedButton(onClick = controller::playBacking, enabled = !busy) { Text("반주 원래 키로 재생") }
@@ -224,7 +224,7 @@ internal fun CompletionPage(basic: SingState, model: SingViewModel, mic: (() -> 
         var delayText by remember(records.calibrationMs) { mutableStateOf(records.calibrationMs?.toString() ?: "") }
         OutlinedTextField(value = delayText, onValueChange = { delayText = it }, label = { Text("확인한 보정값 직접 입력 · ms") }, modifier = Modifier.fillMaxWidth())
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextButton(onClick = { delayText.toIntOrNull()?.let(controller::calibration) }, enabled = !busy && delayText.toIntOrNull() in -500..500) { Text("적용") }
+            TextButton(onClick = { delayText.toIntOrNull()?.let(controller::calibration) }, enabled = !busy && (delayText.toIntOrNull() ?: 999) in -500..500) { Text("적용") }
             TextButton(onClick = { controller.calibration(null) }, enabled = !busy) { Text("보정 해제") }
         }
     }

@@ -87,13 +87,27 @@ object MelodyAnalyzer {
                 tolerance: Int = 25, calibrationMs: Int? = null): PerformanceReport {
         if (!songVerified || notes.isEmpty()) return PerformanceReport(null, null, 0.0, emptyList(), null)
         require(tolerance in 10..100)
-        val aligned = frames.sortedBy { it.timeMs }.map { it.copy(timeMs = it.timeMs - (calibrationMs ?: 0)) }
+        val ordered = frames.sortedBy { it.timeMs }
+        // Remove isolated octave spikes using neighbors, never using the target to fold octaves.
+        val aligned = ordered.mapIndexed { index, f ->
+            val left = ordered.getOrNull(index - 1)?.pitch
+            val right = ordered.getOrNull(index + 1)?.pitch
+            val current = f.pitch
+            val isolatedOctave = valid(left) && valid(right) && valid(current) &&
+                abs(1200 * log2(left!!.hz / right!!.hz)) <= 50 &&
+                abs(abs(1200 * log2(current!!.hz / left.hz)) - 1200) <= 80
+            val cleaned = if (isolatedOctave) current!!.copy(hz = (left!!.hz + right!!.hz) / 2) else current
+            f.copy(timeMs = f.timeMs - (calibrationMs ?: 0), pitch = cleaned)
+        }
+        val intervals = aligned.zipWithNext().map { (a, b) -> b.timeMs - a.timeMs }.filter { it > 0 }.sorted()
+        val hop = (intervals.getOrNull(intervals.size / 2) ?: 93L).coerceIn(20L, 200L)
         val results = notes.map { n ->
             // Exclude a short attack and release from sustained pitch evaluation.
             val guard = minOf(80L, n.durationMs / 5)
             val held = aligned.filter { it.timeMs >= n.startMs + guard && it.timeMs < n.endMs - guard }
             val voiced = held.filter { valid(it.pitch) }
-            val coverage = if (held.isEmpty()) 0.0 else voiced.size.toDouble() / held.size
+            val expected = ceil((n.durationMs - 2 * guard).toDouble() / hop).toInt().coerceAtLeast(1)
+            val coverage = voiced.size.toDouble() / maxOf(expected, held.size)
             val errors = voiced.map { abs(Music.cents(it.pitch!!.hz, n.midi + shift)) }
             // Silence is reflected in coverage, never rewarded as correct pitch.
             val accuracy = if (voiced.size < 3 || coverage < .5) null else errors.count { it <= tolerance }.toDouble() / errors.size

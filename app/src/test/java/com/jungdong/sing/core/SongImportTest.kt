@@ -45,5 +45,15 @@ class SongImportTest {
         assertThrows(IllegalArgumentException::class.java) { SongImporter.parse("<!DOCTYPE score-partwise SYSTEM 'https://example.com/a'><score-partwise/>".toByteArray()) }
         assertThrows(IllegalArgumentException::class.java) { SongImporter.parse(ByteArray(SongImporter.MAX_BYTES+1)) }
     }
+    @Test fun tempoOnOneMusicXmlPartAppliesToAllParts() {
+        val original = String(xml())
+        val added = "<part id=\"P2\"><measure number=\"1\"><attributes><time><beats>2</beats><beat-type>4</beat-type></time></attributes><note><pitch><step>E</step><octave>3</octave></pitch><duration>1</duration></note><note><pitch><step>F</step><octave>3</octave></pitch><duration>1</duration></note></measure></part>"
+        val score = original.replace("</score-partwise>",added+"</score-partwise>")
+        val melodies = SongImporter.parse(score.toByteArray()).melodies
+        assertEquals(2,melodies.size); assertTrue(melodies.all { it.notes.first().durationMs == 1000L })
+    }
+    @Test fun soundRepeatJumpWithoutTempoIsRejected() {
+        assertThrows(IllegalArgumentException::class.java) { SongImporter.parse(xml("<direction><sound dacapo=\"yes\"/></direction>")) }
+    }
     @Test fun truncatedMidiIsRejected() { assertThrows(IllegalArgumentException::class.java) { SongImporter.parse(midi().copyOf(20)) } }
 }

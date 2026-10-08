@@ -148,13 +148,22 @@ object SongImporter {
             root.getElementsByTagName("segno").length == 0 && root.getElementsByTagName("coda").length == 0) {
             "반복·도돌이표를 펼친 MusicXML을 사용해 주세요. 원곡 구조를 임의로 추정하지 않습니다."
         }
+        val sounds = root.getElementsByTagName("sound")
+        (0 until sounds.length).forEach { index ->
+            val sound = sounds.item(index) as Element
+            require(listOf("dacapo", "dalsegno", "tocoda", "fine").none { sound.hasAttribute(it) }) {
+                "재생 순서의 반복·이동을 펼친 MusicXML을 사용해 주세요."
+            }
+        }
         val names = root.child("part-list")?.children("score-part")?.associate { it.getAttribute("id") to (it.value("part-name") ?: it.getAttribute("id")) } ?: emptyMap()
         val ppq = 9600L; val melodies = mutableListOf<ImportedMelody>(); val warnings = mutableListOf<String>()
+        data class XmlRaw(val label: String, val referenceKey: String?, val ticks: List<TickNote>)
+        val raw = mutableListOf<XmlRaw>(); val globalTempos = mutableListOf<Tempo>()
         val parts = root.children("part"); require(parts.size in 1..128)
         parts.forEach { part ->
             var divisions = 1L; var beats = 4; var denominator = 4; var measureStart = 0L
             val voices = mutableMapOf<String, MutableList<TickNote>>(); val tempos = mutableListOf<Tempo>()
-            val keyNames = mutableSetOf<String>(); var explicitTempo = false
+            val keyNames = mutableSetOf<String>()
             val ties = mutableMapOf<Pair<String, Int>, Int>()
             val measures = part.children("measure"); require(measures.size <= 2000)
             measures.forEachIndexed { index, measure ->
@@ -177,7 +186,9 @@ object SongImporter {
                             val bpm = it.toDouble(); require(bpm.isFinite() && bpm in 20.0..600.0)
                             require(!item.child("sound")!!.hasAttribute("dacapo") && !item.child("sound")!!.hasAttribute("dalsegno")) { "반복을 펼친 악보가 필요합니다." }
                             val offset = item.value("offset")?.toLong() ?: 0
-                            tempos.add(Tempo(measureStart + cursor + offset * ppq / divisions, (60_000_000 / bpm).roundToLong())); explicitTempo = true
+                            val tick = measureStart + cursor + offset * ppq / divisions
+                            require(tick >= 0)
+                            tempos.add(Tempo(tick, (60_000_000 / bpm).roundToLong()))
                         }
                         "backup", "forward" -> {
                             val d = (item.value("duration") ?: error("박자 길이가 없습니다.")).toLong() * ppq / divisions
@@ -217,13 +228,18 @@ object SongImporter {
                 measureStart += if (measure.getAttribute("implicit") == "yes") furthest else maxOf(expected, furthest)
             }
             require(ties.isEmpty()) { "끝나지 않은 붙임줄이 있습니다." }
-            if (!explicitTempo) warnings.add("${names[part.getAttribute("id")] ?: "파트"}: 템포가 없어 기본 120 BPM입니다. 타이밍을 확인해 주세요.")
+            globalTempos.addAll(tempos)
             voices.forEach { (voice, ticks) ->
-                val notes = convert(ticks, tempos, ppq)
                 val label = "${names[part.getAttribute("id")] ?: part.getAttribute("id")} · 성부 $voice"
-                if (acceptable(notes)) melodies.add(ImportedMelody(label, keyNames.singleOrNull(), notes))
-                else warnings.add("$label: 겹치는 음 또는 10분 초과 파트는 제외했습니다.")
+                raw.add(XmlRaw(label, keyNames.singleOrNull(), ticks))
             }
+        }
+        require(globalTempos.groupBy { it.tick }.values.all { values -> values.map { it.micros }.distinct().size == 1 }) { "파트 사이의 템포가 다릅니다. 하나의 검증된 템포 지도를 사용해 주세요." }
+        if (globalTempos.isEmpty()) warnings.add("템포가 없어 기본 120 BPM입니다. 타이밍을 직접 확인해 주세요.")
+        raw.forEach { part ->
+            val notes = convert(part.ticks, globalTempos, ppq)
+            if (acceptable(notes)) melodies.add(ImportedMelody(part.label, part.referenceKey, notes))
+            else warnings.add("${part.label}: 겹치는 음 또는 10분 초과 파트는 제외했습니다.")
         }
         require(melodies.isNotEmpty()) { "분리된 단선율 멜로디 파트가 없습니다." }
         return SongImportResult(melodies, warnings.distinct())

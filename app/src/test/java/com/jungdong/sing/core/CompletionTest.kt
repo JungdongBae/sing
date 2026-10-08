@@ -83,6 +83,8 @@ class CompletionTest {
         val ns = listOf(MelodyNote(48,0,1000,1),MelodyNote(50,1000,1000,1))
         val r = MelodyAnalyzer.analyze(true,ns,0,(0L..450L step 50).map { PerformanceFrame(it,pitch(48)) })
         assertNull(r.pitchAccuracy); assertTrue(r.coverage < .7)
+        val single = MelodyAnalyzer.analyze(true,ns.take(1),0,(0L..450L step 50).map { PerformanceFrame(it,pitch(48)) })
+        assertNull(single.pitchAccuracy); assertTrue(single.coverage < .7)
     }
     @Test fun inconsistentCalibrationIsRejected() {
         assertEquals(80,LatencyCalibration.estimate(listOf(1000,2000,3000,4000),listOf(1080,2080,3080,4080)))
