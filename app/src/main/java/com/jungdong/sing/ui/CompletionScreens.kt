@@ -33,7 +33,7 @@ internal fun CompletionPage(basic: SingState, model: SingViewModel, mic: (() -> 
     val ui by controller.state.collectAsStateWithLifecycle()
     val records = ui.records
     val song = records.song
-    val busy = ui.recording || ui.playing || ui.importing
+    val busy = ui.recording || ui.playing || ui.importing || ui.saving
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(controller::importMelody) }
     var backingShift by rememberSaveable { mutableStateOf("0") }
     var backingConsent by rememberSaveable { mutableStateOf(false) }
@@ -44,9 +44,13 @@ internal fun CompletionPage(basic: SingState, model: SingViewModel, mic: (() -> 
     Heading("MY FIRST SONG / 5–8 WEEKS", "나의 첫 완성곡", "목표곡: 옛사랑 – 이문세\n내 편안한 키로 구간을 나누고, 녹음을 비교하며 한 곡을 연결해요.")
     if (ui.loading) { CircularProgressIndicator(); Text("완성곡 기록을 불러오는 중…"); return }
     if (ui.loadFailed) { Text("저장된 기록을 읽지 못했어요. 앱을 다시 실행해 주세요.", color = Coral); return }
-    if (busy || basic.playing || basic.listening) {
+    if (ui.recording || ui.playing || basic.playing || basic.listening) {
         Button(onClick = model::stopAudio, modifier = Modifier.fillMaxWidth(),
             colors = ButtonDefaults.buttonColors(containerColor = Coral, contentColor = Ink)) { Text("■ 중지 · 녹음 중이면 부분 녹음 저장") }
+    }
+    if (ui.importing) {
+        CircularProgressIndicator()
+        TextButton(onClick = controller::cancelImport) { Text("파일 가져오기 취소") }
     }
     if (ui.countdown > 0) Text("${ui.countdown}초 후 시작 · 편안하게 준비해 주세요", fontSize = 24.sp, color = Lime)
     if (ui.recording && ui.countdown == 0) {
@@ -119,14 +123,17 @@ internal fun CompletionPage(basic: SingState, model: SingViewModel, mic: (() -> 
                 FilterChip(selected = records.selectedKey == candidate.semitones, enabled = !busy,
                     onClick = { controller.selectKey(candidate.semitones) }, label = { Text(keyLabel(candidate.semitones)) })
                 Text("${Music.name(candidate.low)}~${Music.name(candidate.high)} · 먼저 확인할 마디 ${candidate.challengingBars.joinToString()}", color = Muted, fontSize = 13.sp)
+                records.trials.lastOrNull { it.songId == song.id && it.profileId == basic.range?.id && it.semitones == candidate.semitones }?.let {
+                    Text("최근 비교: 음정 ${percent(it.pitchAccuracy)} · 편안함 ${it.comfort}/5 · ${song.section(it.sectionId)?.label ?: "전체 곡"}", color = Muted, fontSize = 13.sp)
+                }
             }
             Text("선택 키: ${records.selectedKey?.let(::keyLabel) ?: "아직 선택하지 않았어요"}\n${if (records.keyFinalized) "구간 음정과 편안함을 종합해 최종 선택했어요." else "후보를 골라 구간 녹음과 편안함 평가를 해 주세요."}", color = Lime)
             Button(onClick = controller::finalizeKey, enabled = !busy && candidates.isNotEmpty()) { Text("녹음·편안함 결과로 최종 키 결정") }
-            Text("오래 유지하는 음과 자주 나오는 음에 가중치를 줘요. 편안함 4점 이상, 유효 음성 70% 이상인 녹음으로 비교합니다. 반주 파일의 피치는 바꾸지 않아요.", color = Muted, fontSize = 12.sp)
+            Text("같은 어려운 구간에서 모든 후보를 비교해요. 오래 유지하는 음과 자주 나오는 음에 가중치를 줘요. 편안함 4점 이상, 유효 음성 70% 이상, 목표음 맞춤 50% 이상인 키로 최종 선택합니다.", color = Muted, fontSize = 12.sp)
         }
     }
     val plan = CompletionTraining.plan(records.week, records.day)
-    val current = records.current(LocalDate.now().toString())
+    val current = records.lessonProgress() ?: records.current(LocalDate.now().toString())
     BoxCard {
         Text("${records.week}주차 · ${records.day}일차 · ${records.attempt}회차", color = Lime, fontWeight = FontWeight.Bold)
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -146,8 +153,8 @@ internal fun CompletionPage(basic: SingState, model: SingViewModel, mic: (() -> 
         Text("지금 할 일: ${plan.phases[activePhase].title}", fontWeight = FontWeight.Bold)
         Text(plan.phases[activePhase].instruction, color = Muted)
         plan.phases.forEach { Text("${it.seconds / 60}분 · ${it.title}", color = Muted, fontSize = 13.sp) }
-        Button(onClick = controller::toggleTimer, enabled = ui.seconds < 1200 && !ui.importing, modifier = Modifier.fillMaxWidth()) { Text(if (ui.timerRunning) "타이머 일시정지" else "20분 연습 시작 / 이어 하기") }
-        Text("완료 여부: ${if (current.completed) "20분 완료" else "연습 중"} · 숙련도는 별도로 확인해요.", color = Muted)
+        Button(onClick = controller::toggleTimer, enabled = ui.seconds < 1200 && !ui.importing && !ui.saving, modifier = Modifier.fillMaxWidth()) { Text(if (ui.timerRunning) "타이머 일시정지" else "20분 연습 시작 / 이어 하기") }
+        Text("이 연습일 최근 기록: ${if (current.completed) "20분 완료" else "연습 중"} · 숙련도는 별도로 확인해요.", color = Muted)
         CheckRow(current.mastered, controller::mastery, "이 내용은 편안하고 안정적으로 할 수 있어요 (숙련 자가 확인)", enabled = !busy)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = controller::repeatWeek, enabled = !busy && !ui.timerRunning) { Text("현재 주차 반복") }
@@ -218,7 +225,7 @@ internal fun CompletionPage(basic: SingState, model: SingViewModel, mic: (() -> 
     BoxCard {
         Text("마이크 · 출력 지연 보정", fontWeight = FontWeight.Bold)
         Text(records.calibrationMs?.let { "현재 보정값 $it ms" } ?: "미설정 · 박자 점수를 표시하지 않아요", color = Lime)
-        Text("조용한 곳에서 스피커 클릭을 마이크가 듣도록 해 주세요. 지연 추정은 기기별 확인이 필요하며 출력 장치가 바뀌면 무효화합니다.", color = Muted, fontSize = 12.sp)
+        Text("조용한 곳에서 스피커 클릭을 마이크가 듣도록 해 주세요. 연결 장치 목록이 바뀌면 보정을 해제해요. 출력 방식을 바꾸면 직접 다시 보정해 주세요. 추정 정확도는 기기별 확인이 필요해요.", color = Muted, fontSize = 12.sp)
         OutlinedButton(onClick = { mic(controller::calibrate) }, enabled = !busy) { Text("클릭 4번으로 지연 추정") }
         ui.calibrationMessage?.let { Text(it, color = Muted) }
         var delayText by remember(records.calibrationMs) { mutableStateOf(records.calibrationMs?.toString() ?: "") }

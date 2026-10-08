@@ -5,10 +5,10 @@ import java.io.RandomAccessFile
 
 /** Stream into an app-private WAV. The header is finalized even for a user-stopped take. */
 class WavWriter(private val file: File, val sampleRate: Int) : AutoCloseable {
-    private val output = RandomAccessFile(file, "rw")
+    private val output: RandomAccessFile
     private var samples = 0L
     private var closed = false
-    init { require(sampleRate in listOf(22050, 44100, 48000)); output.setLength(0); output.write(ByteArray(44)) }
+    init { require(sampleRate in listOf(22050, 44100, 48000)); output = RandomAccessFile(file, "rw"); output.setLength(0); output.write(ByteArray(44)) }
     val durationMs get() = samples * 1000 / sampleRate
     fun write(pcm: ShortArray) {
         check(!closed)

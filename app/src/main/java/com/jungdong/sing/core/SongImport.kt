@@ -132,7 +132,10 @@ object SongImporter {
     private fun Element.value(tag: String) = child(tag)?.textContent?.trim()
     private fun musicXml(bytes: ByteArray): SongImportResult {
         val decoder = Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT)
-        val xml = decoder.decode(ByteBuffer.wrap(bytes)).toString().removePrefix("\uFEFF")
+        val decoded = decoder.decode(ByteBuffer.wrap(bytes)).toString().removePrefix("\uFEFF")
+        // Standard external MusicXML declarations are removed, never downloaded or resolved.
+        val externalDoctype = Regex("""<!DOCTYPE\s+score-partwise\s+(?:PUBLIC\s+["'][^<>\[\]]+?["']\s+|SYSTEM\s+)["'][^<>\[\]]+?["']\s*>""")
+        val xml = decoded.replace(externalDoctype, "")
         require(!xml.contains("<!DOCTYPE", true) && !xml.contains("<!ENTITY", true)) { "외부 DTD/엔티티가 없는 UTF-8 MusicXML을 사용해 주세요." }
         require(!xml.contains("encoding=\"UTF-16\"", true)) { "UTF-8 MusicXML만 지원합니다." }
         val factory = DocumentBuilderFactory.newInstance().apply {

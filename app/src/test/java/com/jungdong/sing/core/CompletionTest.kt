@@ -33,13 +33,26 @@ class CompletionTest {
         }
     }
     @Test fun finalKeyRequiresBothValidPitchAndComfortAndCurrentProfile() {
-        val candidates = KeyRecommender.recommend(song(),profile()); val shift = candidates.first().semitones
+        val candidates = KeyRecommender.recommend(song(),profile()).take(1); val shift = candidates.first().semitones
         val good = KeyTrial("song","voice","s0",shift,.9,.95,4,"r1")
         assertEquals(shift, KeyRecommender.finalize(candidates,listOf(good),"song","voice"))
         assertNull(KeyRecommender.finalize(candidates,listOf(good.copy(comfort=3)),"song","voice"))
         assertNull(KeyRecommender.finalize(candidates,listOf(good.copy(pitchAccuracy=null)),"song","voice"))
         assertNull(KeyRecommender.finalize(candidates,listOf(good.copy(coverage=.5)),"song","voice"))
+        assertNull(KeyRecommender.finalize(candidates,listOf(good.copy(pitchAccuracy=.1)),"song","voice"))
         assertNull(KeyRecommender.finalize(candidates,listOf(good),"song","differentVoice"))
+    }
+    @Test fun finalKeyComparesAllCandidatesOnTheSameSection() {
+        val cs = KeyRecommender.recommend(song(),profile())
+        val trials = cs.mapIndexed { i,c -> KeyTrial("song","voice","s0",c.semitones,.9-i*.1,.9,4,"r$i") }
+        assertEquals(cs.first().semitones,KeyRecommender.finalize(cs,trials,"song","voice"))
+        assertNull(KeyRecommender.finalize(cs,trials.dropLast(1),"song","voice"))
+        assertNull(KeyRecommender.finalize(cs,trials.mapIndexed { i,t -> t.copy(sectionId="s$i") },"song","voice"))
+    }
+    @Test fun isolatedOctaveSpikeDoesNotMoveTargetOrFoldSustainedOctaves() {
+        val ns = listOf(MelodyNote(48,0,1000,1))
+        val frames = (0L..950L step 50).map { PerformanceFrame(it,pitch(if (it==500L) 60 else 48)) }
+        assertEquals(1.0,MelodyAnalyzer.analyze(true,ns,0,frames).pitchAccuracy!!,.001)
     }
     @Test fun everyExtendedDayRemainsTwentyMinutes() {
         for (w in 5..8) for (d in 1..5) assertEquals(1200,CompletionTraining.plan(w,d).phases.sumOf { it.seconds })

@@ -15,6 +15,7 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true }
+    lint { xmlReport = true }
     signingConfigs {
         create("publicDebug") {
             // Public development identity only. Never use this key for a release/store build.

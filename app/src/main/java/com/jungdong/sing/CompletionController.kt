@@ -23,6 +23,7 @@ data class CompletionUi(
     val sectionId: String? = null, val recording: Boolean = false, val playing: Boolean = false,
     val countdown: Int = 0, val positionMs: Long = 0, val pitch: Pitch? = null, val target: Int? = null,
     val timerRunning: Boolean = false, val seconds: Int = 0, val calibrationMessage: String? = null,
+    val saving: Boolean = false,
     val latestId: String? = null,
 )
 
@@ -40,6 +41,10 @@ class CompletionController(
     private var audioJob: Job? = null
     private var timerJob: Job? = null
     private var importJob: Job? = null
+    private var cachedSongId: String? = null
+    private var cachedProfileId: String? = null
+    private var cachedKeys: List<KeyRecommendation> = emptyList()
+    private var pendingWrites = 0
     @Volatile private var generation = 0
     @Volatile private var player: MediaPlayer? = null
     init {
@@ -80,10 +85,13 @@ class CompletionController(
     }
     private fun update(block: (CompletionRecords) -> CompletionRecords) {
         if (state.value.loading || state.value.loadFailed) return
+        pendingWrites++
+        mutable.update { it.copy(saving = true) }
         scope.launch {
             try { store.update(block) }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { error("완성곡 기록을 저장하지 못했어요. 다시 시도해 주세요.") }
+            finally { pendingWrites--; mutable.update { it.copy(saving = pendingWrites > 0) } }
         }
     }
     fun open() { pauseBasic(); stopAll(); checkRoute() }
@@ -138,11 +146,19 @@ class CompletionController(
         mutable.update { it.copy(draft = null, sectionId = song.sections.firstOrNull()?.id, latestId = null, seconds = 0) }
     }
     fun cancelDraft() { mutable.update { it.copy(draft = null) } }
+    fun cancelImport() { importJob?.cancel() }
     fun renameSection(id: String, label: String) {
         if (label.isBlank()) return
         update { r -> r.copy(song = r.song?.copy(sections = r.song.sections.map { if (it.id == id) it.copy(label = label.trim().take(60)) else it })) }
     }
-    fun recommendations() = KeyRecommender.recommend(state.value.records.song, basicState().range)
+    fun recommendations(): List<KeyRecommendation> {
+        val song = state.value.records.song; val profile = basicState().range
+        if (song?.id != cachedSongId || profile?.id != cachedProfileId) {
+            cachedKeys = KeyRecommender.recommend(song, profile)
+            cachedSongId = song?.id; cachedProfileId = profile?.id
+        }
+        return cachedKeys
+    }
     fun selectKey(shift: Int) {
         stopAll()
         if (recommendations().none { it.semitones == shift }) return
@@ -151,7 +167,7 @@ class CompletionController(
     fun finalizeKey() {
         val r = state.value.records; val song = r.song ?: return; val profile = basicState().range ?: return
         val selected = KeyRecommender.finalize(recommendations(), r.trials, song.id, profile.id)
-        if (selected == null) { error("후보 키로 구간을 녹음한 뒤 충분한 유효 음정과 편안함 4점 이상을 확인해 주세요."); return }
+        if (selected == null) { error("같은 구간에서 모든 후보를 녹음·평가해 주세요. 유효 음성 70% 이상, 목표음 맞춤 50% 이상, 편안함 4점 이상인 키가 필요해요. 적합한 키가 없으면 최종 선택하지 않습니다."); return }
         stopAll(); update { it.copy(selectedKey = selected, keyProfileId = profile.id, keyFinalized = true) }
     }
     private fun practiceNotes(): List<MelodyNote> {
@@ -192,7 +208,10 @@ class CompletionController(
             try {
                 for (n in 3 downTo 1) { mutable.update { if (token == generation) it.copy(countdown = n) else it }; delay(1000) }
                 mutable.update { if (token == generation) it.copy(countdown = 0) else it }
-                if (withBacking) backingPlayer = withContext(Dispatchers.IO) { preparePlayer(File(files, r.backing!!.fileName)) }.also { player = it }
+                if (withBacking) {
+                    backingPlayer = MediaPlayer().also { player = it }
+                    withContext(Dispatchers.IO) { configurePlayer(backingPlayer!!, File(files, r.backing!!.fileName)) }
+                }
                 delay(350)
                 coroutineScope {
                     val input = launch {
@@ -209,7 +228,7 @@ class CompletionController(
                     }
                     val limit = notes.lastOrNull()?.endMs?.plus(500) ?: 600000L
                     try {
-                        while (isActive && (writer?.durationMs ?: 0) < limit) delay(50)
+                        while (isActive && state.value.positionMs < limit) delay(50)
                         completed = true
                     } finally { input.cancel(); audio.interrupt(); input.join() }
                 }
@@ -240,10 +259,13 @@ class CompletionController(
             }
         }
     }
+    private fun configurePlayer(p: MediaPlayer, file: File) {
+        p.setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build())
+        p.setDataSource(file.absolutePath); p.prepare()
+    }
     private fun preparePlayer(file: File): MediaPlayer = MediaPlayer().apply {
         try {
-            setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build())
-            setDataSource(file.absolutePath); prepare()
+            configurePlayer(this, file)
         } catch (e: Exception) { release(); throw e }
     }
     fun playRecording(id: String) {
@@ -251,8 +273,10 @@ class CompletionController(
         playFile(File(files, session.fileName))
     }
     private fun playFile(file: File) = launchAudio { token ->
-        val p = withContext(Dispatchers.IO) { preparePlayer(file) }; player = p
+        val p = MediaPlayer(); player = p
         try {
+            withContext(Dispatchers.IO) { configurePlayer(p, file) }
+            currentCoroutineContext().ensureActive()
             p.start()
             while (isActive && p.isPlaying) { mutable.update { if (token == generation) it.copy(positionMs = p.currentPosition.toLong()) else it }; delay(100) }
         } finally { if (player === p) player = null; runCatching { p.stop() }; p.release() }
@@ -348,20 +372,22 @@ class CompletionController(
         pauseTimer(); stopAll(); update { it.copy(week = week, day = day) }
     }
     fun mastery(value: Boolean) {
-        val r = state.value.records; val session = r.current(LocalDate.now().toString())
-        scope.launch { try { store.practice(session.copy(seconds = state.value.seconds, mastered = value)) } catch (_: Exception) { error("숙련 확인을 저장하지 못했어요.") } }
+        update { r ->
+                val session = (r.lessonProgress() ?: r.current(LocalDate.now().toString())).copy(mastered = value)
+                r.copy(sessions = r.sessions.filterNot { it.date == session.date && it.week == session.week && it.day == session.day && it.attempt == session.attempt && it.songId == session.songId } + session)
+        }
     }
     fun repeatWeek() {
         pauseTimer(); stopAll(); update { it.copy(day = 1, attempt = it.attempt + 1) }
     }
     fun nextDay() {
-        val r = state.value.records; val s = r.current(LocalDate.now().toString())
-        if (!s.completed || !s.mastered) { error("20분 완료와 숙련 자가 확인이 필요해요. 어려우면 현재 주차를 반복해 주세요."); return }
+        val r = state.value.records; val s = r.lessonProgress()
+        if (s == null || !s.completed || !s.mastered) { error("20분 완료와 숙련 자가 확인이 필요해요. 어려우면 현재 주차를 반복해 주세요."); return }
         val next = CompletionTraining.next(r.week, r.day) ?: return
         pauseTimer(); stopAll(); update { it.copy(week = next.first, day = next.second) }
     }
     fun toggleTimer() {
-        if (state.value.loading || state.value.loadFailed) return
+        if (state.value.loading || state.value.loadFailed || state.value.saving) return
         if (state.value.timerRunning) { pauseTimer(); return }
         if (state.value.seconds >= 1200) return
         pauseBasic(); mutable.update { it.copy(timerRunning = true) }
@@ -380,7 +406,7 @@ class CompletionController(
                         val add = (remainder / 1000).toInt(); remainder %= 1000
                         mutable.update { it.copy(seconds = (it.seconds + add).coerceAtMost(1200)) }
                         val existing = state.value.records.current(date)
-                        store.practice(existing.copy(week = r.week, day = r.day, attempt = r.attempt, songId = r.song?.id, seconds = state.value.seconds))
+                        store.progress(existing.copy(week = r.week, day = r.day, attempt = r.attempt, songId = r.song?.id, seconds = state.value.seconds))
                     }
                 }
             } catch (cancelled: CancellationException) { throw cancelled }

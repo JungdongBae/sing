@@ -54,4 +54,19 @@ class CompletionStoreTest {
         assertThrows(Exception::class.java) { CompletionCodec.decode("not json") }
         assertThrows(Exception::class.java) { CompletionCodec.decode("{\"version\":88}") }
     }
+    @Test fun timerWritesPreserveIndependentMasteryAndNeverReduceProgress() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob()+Dispatchers.IO)
+        try {
+            val s=store(scope,File(folder.root,"timer.preferences_pb"))
+            s.practice(PracticeSession("2026-10-08",5,1,100,true))
+            s.progress(PracticeSession("2026-10-08",5,1,99))
+            val loaded=s.records.first().current("2026-10-08")
+            assertEquals(100,loaded.seconds); assertTrue(loaded.mastered)
+        } finally { scope.coroutineContext[Job]!!.cancelAndJoin() }
+    }
+    @Test fun completedLessonCanAdvanceAfterCalendarDateChanges() {
+        val r=CompletionRecords(sessions=listOf(PracticeSession("2026-10-08",5,1,1200,true)))
+        assertEquals(0,r.current("2026-10-09").seconds)
+        assertTrue(r.lessonProgress()!!.completed); assertTrue(r.lessonProgress()!!.mastered)
+    }
 }

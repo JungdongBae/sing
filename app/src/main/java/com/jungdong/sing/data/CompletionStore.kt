@@ -23,6 +23,9 @@ data class CompletionRecords(
     fun current(date: String): PracticeSession = sessions.findLast {
         it.date == date && it.week == week && it.day == day && it.attempt == attempt && it.songId == song?.id
     } ?: PracticeSession(date, week, day, 0, songId = song?.id, attempt = attempt)
+    fun lessonProgress(): PracticeSession? = sessions.findLast {
+        it.week == week && it.day == day && it.attempt == attempt && it.songId == song?.id
+    }
     val completionRate get() = sessions.filter { it.completed && it.songId == song?.id }
         .map { it.week to it.day }.distinct().size / 20.0
 }
@@ -57,6 +60,11 @@ class CompletionStore(private val dataStore: DataStore<Preferences>) {
     suspend fun practice(session: PracticeSession) = update { r -> r.copy(sessions = r.sessions.filterNot {
         it.date == session.date && it.week == session.week && it.day == session.day && it.attempt == session.attempt && it.songId == session.songId
     } + session) }
+    suspend fun progress(session: PracticeSession) = update { r ->
+        val prior = r.sessions.findLast { it.date == session.date && it.week == session.week && it.day == session.day && it.attempt == session.attempt && it.songId == session.songId }
+        val merged = session.copy(seconds = maxOf(session.seconds, prior?.seconds ?: 0), mastered = prior?.mastered ?: false)
+        r.copy(sessions = r.sessions.filterNot { it.date == session.date && it.week == session.week && it.day == session.day && it.attempt == session.attempt && it.songId == session.songId } + merged)
+    }
     suspend fun recording(session: RecordingSession) = update { r ->
         require(r.recordings.none { it.id == session.id }); r.copy(recordings = r.recordings + session)
     }

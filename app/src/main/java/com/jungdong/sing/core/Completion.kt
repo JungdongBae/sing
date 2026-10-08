@@ -60,13 +60,20 @@ object KeyRecommender {
         }.sortedWith(compareBy<KeyRecommendation> { it.cost }.thenBy { abs(it.semitones) }).take(3)
     }
     fun finalize(candidates: List<KeyRecommendation>, trials: List<KeyTrial>, songId: String,
-                 profileId: String): Int? = trials.filter {
-        it.songId == songId && it.profileId == profileId && it.comfort >= 4 &&
-            (it.coverage ?: 0.0) >= .7 && it.pitchAccuracy != null &&
-            candidates.any { c -> c.semitones == it.semitones }
-    }.groupBy { it.semitones }.entries.maxByOrNull { (_, values) ->
-        values.map { .7 * it.pitchAccuracy!! + .3 * (it.comfort - 1) / 4.0 }.average()
-    }?.key
+                 profileId: String): Int? {
+        if (candidates.isEmpty()) return null
+        val measured = trials.filter {
+            it.songId == songId && it.profileId == profileId && (it.coverage ?: 0.0) >= .7 &&
+                it.pitchAccuracy != null && candidates.any { c -> c.semitones == it.semitones }
+        }
+        val comparable = measured.groupBy { it.sectionId }.values.lastOrNull { group ->
+            candidates.all { c -> group.any { it.semitones == c.semitones } }
+        } ?: return null
+        return comparable.filter { it.comfort >= 4 && it.pitchAccuracy!! >= .5 }
+            .groupBy { it.semitones }.entries.maxByOrNull { (_, values) ->
+                values.map { .7 * it.pitchAccuracy!! + .3 * (it.comfort - 1) / 4.0 }.average()
+            }?.key
+    }
 }
 
 data class VocalSelfAssessment(val comfort: Int, val breath: Int, val diction: Int, val connection: Int, val satisfaction: Int) {

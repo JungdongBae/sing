@@ -56,4 +56,10 @@ class SongImportTest {
         assertThrows(IllegalArgumentException::class.java) { SongImporter.parse(xml("<direction><sound dacapo=\"yes\"/></direction>")) }
     }
     @Test fun truncatedMidiIsRejected() { assertThrows(IllegalArgumentException::class.java) { SongImporter.parse(midi().copyOf(20)) } }
+    @Test fun standardExternalMusicXmlDtdIsNotLoaded() {
+        val score=String(xml()).replace("<score-partwise>","<!DOCTYPE score-partwise PUBLIC \"-//Recordare//DTD MusicXML 4.0 Partwise//EN\" \"http://www.musicxml.org/dtds/partwise.dtd\"><score-partwise>")
+        assertEquals(2,SongImporter.parse(score.toByteArray()).melodies.single().notes.size)
+        val internal=score.replace("http://www.musicxml.org/dtds/partwise.dtd\">","http://www.musicxml.org/dtds/partwise.dtd\" [<!ENTITY a \"attack\">]>")
+        assertThrows(IllegalArgumentException::class.java) { SongImporter.parse(internal.toByteArray()) }
+    }
 }
