@@ -112,14 +112,13 @@ class SingViewModel(application: Application) : AndroidViewModel(application) {
         audioJob = viewModelScope.launch {
             previous?.join()
             firstSong.joinAudio()
-            try { audio.acquireFocus(); block() }
+            try { audio.focused { block() } }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (e: Exception) {
                 error(e.message ?: "오디오 오류가 발생했습니다. 다시 시도해 주세요.")
                 if (generation == audioGeneration && diagnosis) mutable.update { it.copy(diagnosis = RangeWorkflow.interrupted(it.diagnosis, MeasurementFailure.DEVICE_ERROR)) }
             }
             finally {
-                audio.releaseFocus()
                 if (generation == audioGeneration) {
                     beatTimeMs = null
                     mutable.update { it.copy(listening = false, playing = false, metronome = false, beat = -1, pitch = null) }

@@ -74,11 +74,10 @@ class CompletionController(
         mutable.update { it.copy(recording = recording, playing = !recording, positionMs = 0, pitch = null, target = null) }
         audioJob = scope.launch {
             previous?.join(); joinBasic()
-            try { audio.acquireFocus(); block(token) }
+            try { audio.focused { block(token) } }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (e: Exception) { error(e.message ?: "오디오 작업을 완료하지 못했어요.") }
             finally {
-                audio.releaseFocus()
                 if (token == generation) mutable.update { it.copy(recording = false, playing = false, countdown = 0, pitch = null, target = null) }
             }
         }

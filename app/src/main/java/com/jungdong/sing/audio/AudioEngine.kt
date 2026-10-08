@@ -20,13 +20,19 @@ class AudioEngine(private val context: Context, onFocusLoss: () -> Unit) {
     private val lock = Any()
     private var recorder: AudioRecord? = null
     private var track: AudioTrack? = null
+    private val sessions = AudioSessionGate()
 
-    fun acquireFocus() {
+    suspend fun focused(block: suspend () -> Unit) = sessions.run {
+        acquireFocus()
+        try { block() } finally { releaseFocus() }
+    }
+
+    private fun acquireFocus() {
         check(manager.requestAudioFocus(focus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
             "다른 앱이 오디오를 사용 중입니다. 잠시 후 다시 시도해 주세요."
         }
     }
-    fun releaseFocus() { manager.abandonAudioFocusRequest(focus) }
+    private fun releaseFocus() { manager.abandonAudioFocusRequest(focus) }
 
     // Stop unblocks device I/O; the owning coroutine alone releases the resource in finally.
     fun interrupt() = synchronized(lock) {
