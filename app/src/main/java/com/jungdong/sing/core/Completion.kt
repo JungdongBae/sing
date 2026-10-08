@@ -119,16 +119,17 @@ object MelodyAnalyzer {
             // Silence is reflected in coverage, never rewarded as correct pitch.
             val accuracy = if (voiced.size < 3 || coverage < .5) null else errors.count { it <= tolerance }.toDouble() / errors.size
             val searchLow = max(0L, n.startMs - minOf(300L, n.durationMs / 2))
-            val onsetFrames = aligned.filter { it.timeMs in searchLow..minOf(n.endMs, n.startMs + 400) }
-            val onset = onsetFrames.zipWithNext().firstOrNull { (a, b) ->
-                valid(a.pitch) && valid(b.pitch) && abs(Music.cents(a.pitch!!.hz, n.midi + shift)) <= 100 &&
-                    abs(Music.cents(b.pitch!!.hz, n.midi + shift)) <= 100
-            }?.first?.timeMs
-            // A repeated/tied pitch without an observable transition is not an onset measurement.
-            val previous = aligned.lastOrNull { it.timeMs < searchLow }
-            val distinctAttack = !valid(previous?.pitch) || abs(Music.cents(previous!!.pitch!!.hz, n.midi + shift)) > 100
+            val onsetIndex = aligned.indices.firstOrNull { index ->
+                val a = aligned[index]; val b = aligned.getOrNull(index + 1)
+                val previous = aligned.getOrNull(index - 1)
+                a.timeMs in searchLow..minOf(n.endMs, n.startMs + 400) && valid(a.pitch) && valid(b?.pitch) &&
+                    abs(Music.cents(a.pitch!!.hz, n.midi + shift)) <= 100 && abs(Music.cents(b!!.pitch!!.hz, n.midi + shift)) <= 100 &&
+                    (!valid(previous?.pitch) || abs(Music.cents(previous!!.pitch!!.hz, n.midi + shift)) > 100)
+            }
+            // Require a local silence/pitch transition; a repeated sustained pitch has no fabricated onset.
+            val onset = onsetIndex?.let { aligned[it].timeMs }
             NoteFeedback(n.bar, n.midi + shift, accuracy, errors.takeIf { it.isNotEmpty() }?.average(),
-                if (calibrationMs != null && onset != null && distinctAttack) onset - n.startMs else null, coverage)
+                if (calibrationMs != null && onset != null) onset - n.startMs else null, coverage)
         }
         val reliable = results.filter { it.pitchAccuracy != null }
         val onsets = results.mapNotNull { it.onsetErrorMs }

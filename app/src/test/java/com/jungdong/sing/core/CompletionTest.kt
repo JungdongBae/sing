@@ -104,6 +104,18 @@ class CompletionTest {
         assertNull(LatencyCalibration.estimate(listOf(1000,2000,3000,4000),listOf(1080,2400,3080,4080)))
         assertNull(LatencyCalibration.estimate(listOf(1000,2000,3000,4000),emptyList()))
     }
+    @Test fun repeatedPitchAfterRestsHasObservableOnsets() {
+        val ns=(0..2).map { MelodyNote(48,it*1000L,700,it+1) }
+        val frames=(0L..3000L step 50).map { t -> PerformanceFrame(t,MelodyAnalyzer.target(ns,t)?.let { pitch(it.midi) }) }
+        val r=MelodyAnalyzer.analyze(true,ns,0,frames,calibrationMs=0)
+        assertEquals(1.0,r.rhythmAccuracy!!,.001); assertTrue(r.notes.all { it.onsetErrorMs==0L })
+    }
+    @Test fun unbrokenRepeatedPitchDoesNotFabricateThreeAttacks() {
+        val ns=(0..2).map { MelodyNote(48,it*1000L,1000,it+1) }
+        val frames=(0L..2950L step 50).map { PerformanceFrame(it,pitch(48)) }
+        val r=MelodyAnalyzer.analyze(true,ns,0,frames,calibrationMs=0)
+        assertNull(r.rhythmAccuracy); assertNull(r.notes[1].onsetErrorMs); assertNull(r.notes[2].onsetErrorMs)
+    }
     @Test fun existingRangeHistoryMigratesWithoutInventingConfidence() {
         val legacy = "1|voice|1|130.8127826502993|43|64|MEASURED||false"
         val p = RangeHistoryCodec.decode(legacy).single(); assertNull(p.startConfidence)

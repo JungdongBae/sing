@@ -83,12 +83,12 @@ class CompletionController(
             }
         }
     }
-    private fun update(block: (CompletionRecords) -> CompletionRecords) {
+    private fun update(after: suspend () -> Unit = {}, block: (CompletionRecords) -> CompletionRecords) {
         if (state.value.loading || state.value.loadFailed) return
         pendingWrites++
         mutable.update { it.copy(saving = true) }
         scope.launch {
-            try { store.update(block) }
+            try { store.update(block); after() }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { error("완성곡 기록을 저장하지 못했어요. 다시 시도해 주세요.") }
             finally { pendingWrites--; mutable.update { it.copy(saving = pendingWrites > 0) } }
@@ -142,7 +142,10 @@ class CompletionController(
         val song = SongMetadata(UUID.randomUUID().toString(), "옛사랑 – 이문세", state.value.draftName, citation.trim().take(500),
             melody.referenceKey, melody.notes, SongMetadata.sections(melody.notes), true)
         stopAll(); pauseTimer()
-        update { it.copy(song = song, selectedKey = null, keyFinalized = false, keyProfileId = basicState().range?.id, week = 5, day = 1, attempt = 1, backing = null) }
+        val oldBacking = state.value.records.backing
+        update(after = { oldBacking?.let { withContext(Dispatchers.IO) { File(files, it.fileName).delete() } } }) {
+            it.copy(song = song, selectedKey = null, keyFinalized = false, keyProfileId = basicState().range?.id, week = 5, day = 1, attempt = 1, backing = null)
+        }
         mutable.update { it.copy(draft = null, sectionId = song.sections.firstOrNull()?.id, latestId = null, seconds = 0) }
     }
     fun cancelDraft() { mutable.update { it.copy(draft = null) } }
@@ -295,7 +298,12 @@ class CompletionController(
         val record = state.value.records.recordings.find { it.id == id } ?: return
         stopAll()
         scope.launch {
-            try { store.deleteRecording(id); withContext(Dispatchers.IO) { File(files, record.fileName).delete() } }
+            try {
+                joinAudio()
+                val deleted = withContext(Dispatchers.IO) { val file = File(files, record.fileName); !file.exists() || file.delete() }
+                if (!deleted) { error("녹음 파일을 삭제하지 못했어요. 기록을 유지했습니다. 다시 시도해 주세요."); return@launch }
+                store.deleteRecording(id)
+            }
             catch (_: Exception) { error("녹음을 삭제하지 못했어요. 다시 시도해 주세요.") }
         }
     }
