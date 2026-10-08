@@ -16,6 +16,7 @@ data class VocalRangeProfile(
     val source: RangeSource = RangeSource.MEASURED,
     val previousId: String? = null,
     val partial: Boolean = false,
+    val startConfidence: Double? = null,
 ) {
     init {
         require(id.matches(Regex("[a-zA-Z0-9_-]+")))
@@ -23,6 +24,7 @@ data class VocalRangeProfile(
         require(timestamp > 0 && startHz.isFinite() && startHz > 0)
         require(Music.midi(startHz) in SUPPORTED)
         require(lowMidi in SUPPORTED && highMidi in SUPPORTED && lowMidi <= highMidi)
+        require(startConfidence == null || (startConfidence.isFinite() && startConfidence in 0.0..1.0))
     }
     val startMidi get() = Music.midi(startHz)
     val comfortable get() = lowMidi..highMidi
@@ -60,6 +62,7 @@ data class RangeMeasurement(
     val hz: Double? = null, val targetCents: Double? = null,
     val validFrames: Int = 0, val totalFrames: Int = 0,
     val failure: MeasurementFailure? = null,
+    val confidence: Double? = null,
 ) {
     val accepted get() = hz != null && failure == null
 }
@@ -87,7 +90,7 @@ object PitchWindow {
             error != null && abs(error) > tolerance -> MeasurementFailure.OFF_TARGET
             else -> null
         }
-        return RangeMeasurement(hz, error, valid.size, samples.size, failure)
+        return RangeMeasurement(hz, error, valid.size, samples.size, failure, valid.map { it.confidence }.average())
     }
 }
 
@@ -100,11 +103,12 @@ data class RangeDiagnosisState(
     val measurement: RangeMeasurement? = null,
     val running: Boolean = false, val progressMs: Int = 0,
     val message: String? = null, val partial: Boolean = false,
+    val startConfidence: Double? = null, val confirmationConfidences: List<Double> = emptyList(),
 ) {
     val canMeasure get() = stage in listOf(RangeStage.START, RangeStage.LOW, RangeStage.HIGH)
     fun profile(id: String, timestamp: Long, previousId: String? = null): VocalRangeProfile? {
         if (stage != RangeStage.RESULT || startHz == null || lowMidi == null || highMidi == null) return null
-        return VocalRangeProfile(id, timestamp, startHz, lowMidi, highMidi, previousId = previousId, partial = partial)
+        return VocalRangeProfile(id, timestamp, startHz, lowMidi, highMidi, previousId = previousId, partial = partial, startConfidence = startConfidence)
     }
 }
 
@@ -134,19 +138,21 @@ object RangeWorkflow {
         val hz = result.hz!!
         if (state.stage == RangeStage.START && state.confirmations.isNotEmpty() &&
             abs(1200 * log2(hz / state.confirmations.first())) > 50) return state.copy(
-            confirmations = emptyList(), measurement = null, message = "두 번의 시작음이 많이 달라요. 평소 말하듯 다시 두 번 측정해 주세요.")
+            confirmations = emptyList(), confirmationConfidences = emptyList(), measurement = null, message = "두 번의 시작음이 많이 달라요. 평소 말하듯 다시 두 번 측정해 주세요.")
         val confirmations = state.confirmations + hz
-        if (confirmations.size < 2) return state.copy(confirmations = confirmations, measurement = null,
+        val confidences = state.confirmationConfidences + listOfNotNull(result.confidence)
+        if (confirmations.size < 2) return state.copy(confirmations = confirmations, confirmationConfidences = confidences, measurement = null,
             message = "같은 음을 한 번 더 3초간 내고 편안한지 확인해 주세요.")
         if (state.stage == RangeStage.START) {
             val startHz = confirmations.average()
             val midi = Music.midi(startHz)
-            val ready = state.copy(startHz = startHz, lowMidi = midi, highMidi = midi, confirmations = emptyList(), measurement = null)
+            val ready = state.copy(startHz = startHz, lowMidi = midi, highMidi = midi, confirmations = emptyList(), confirmationConfidences = emptyList(), measurement = null,
+                startConfidence = confidences.takeIf { it.size == 2 }?.average())
             return if (midi > VocalRangeProfile.SUPPORTED.first) ready.copy(stage = RangeStage.LOW, targetMidi = midi - 1,
                 message = "시작음이 정해졌어요. 조금 낮은 음을 편안하게 따라 불러 보세요.") else beginHigh(ready)
         }
         val target = state.targetMidi ?: return state
-        val ready = state.copy(confirmations = emptyList(), measurement = null)
+        val ready = state.copy(confirmations = emptyList(), confirmationConfidences = emptyList(), measurement = null)
         return when (state.stage) {
             RangeStage.LOW -> if (target <= VocalRangeProfile.SUPPORTED.first) beginHigh(ready.copy(lowMidi = target)) else
                 ready.copy(lowMidi = target, targetMidi = target - 1, message = "잘 했어요. 조금 더 낮춰보세요. 어려우면 여기서 멈춰도 좋아요.")
@@ -158,15 +164,15 @@ object RangeWorkflow {
     private fun beginHigh(state: RangeDiagnosisState): RangeDiagnosisState {
         val start = state.startHz?.let(Music::midi) ?: return state
         return if (start >= VocalRangeProfile.SUPPORTED.last) finish(state) else state.copy(
-            stage = RangeStage.HIGH, targetMidi = start + 1, measurement = null, confirmations = emptyList(), running = false,
+            stage = RangeStage.HIGH, targetMidi = start + 1, measurement = null, confirmations = emptyList(), confirmationConfidences = emptyList(), running = false,
             message = "이제 시작음보다 조금 높은 음을 따라 불러보세요. 무리하게 고음을 내지 마세요.")
     }
     private fun finish(state: RangeDiagnosisState) = state.copy(stage = RangeStage.RESULT, running = false,
-        confirmations = emptyList(), measurement = null, message = "두 번씩 편안하게 확인한 음만 모았어요.")
+        confirmations = emptyList(), confirmationConfidences = emptyList(), measurement = null, message = "두 번씩 편안하게 확인한 음만 모았어요.")
     fun difficult(state: RangeDiagnosisState): RangeDiagnosisState = when (state.stage) {
         RangeStage.LOW -> beginHigh(state)
         RangeStage.HIGH -> finish(state)
-        RangeStage.START -> state.copy(running = false, measurement = null, confirmations = emptyList(), message = "쉬었다가 더 편안한 소리로 다시 측정해 주세요.")
+        RangeStage.START -> state.copy(running = false, measurement = null, confirmations = emptyList(), confirmationConfidences = emptyList(), message = "쉬었다가 더 편안한 소리로 다시 측정해 주세요.")
         else -> state
     }
     fun stop(state: RangeDiagnosisState): RangeDiagnosisState = if (state.startHz == null) RangeDiagnosisState(
@@ -177,12 +183,12 @@ object RangeWorkflow {
 /** Small, versioned text codec for DataStore; rejects malformed data instead of silently replacing history. */
 object RangeHistoryCodec {
     fun encode(profiles: List<VocalRangeProfile>): String = profiles.joinToString("\n") {
-        listOf("1", it.id, it.timestamp, it.startHz, it.lowMidi, it.highMidi, it.source.name, it.previousId ?: "", it.partial).joinToString("|")
+        listOf("2", it.id, it.timestamp, it.startHz, it.lowMidi, it.highMidi, it.source.name, it.previousId ?: "", it.partial, it.startConfidence ?: "").joinToString("|")
     }
     fun decode(text: String): List<VocalRangeProfile> = if (text.isBlank()) emptyList() else text.lineSequence().map { line ->
         val parts = line.split('|')
-        require(parts.size == 9 && parts[0] == "1") { "음역 기록 형식을 읽을 수 없습니다." }
+        require((parts.size == 9 && parts[0] == "1") || (parts.size == 10 && parts[0] == "2")) { "음역 기록 형식을 읽을 수 없습니다." }
         VocalRangeProfile(parts[1], parts[2].toLong(), parts[3].toDouble(), parts[4].toInt(), parts[5].toInt(),
-            RangeSource.valueOf(parts[6]), parts[7].ifEmpty { null }, parts[8].toBooleanStrict())
+            RangeSource.valueOf(parts[6]), parts[7].ifEmpty { null }, parts[8].toBooleanStrict(), parts.getOrNull(9)?.takeIf { it.isNotEmpty() }?.toDouble())
     }.toList().also { require(it.map { p -> p.id }.distinct().size == it.size) }
 }
